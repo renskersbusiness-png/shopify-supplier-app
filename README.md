@@ -261,16 +261,23 @@ shopify-supplier-app/
 The app uses the **OAuth 2.0 client credentials grant** — no user login to Shopify required:
 
 ```
-App starts → getAccessToken() called
+API call needed → getAccessToken() called
      ↓
+Cached token still valid (> 5 min left)? → return it
+     ↓ (if expired or absent)
 POST https://{shop}.myshopify.com/admin/oauth/access_token
-{ client_id, client_secret, grant_type: "client_credentials" }
+Content-Type: application/x-www-form-urlencoded
+grant_type=client_credentials&client_id=...&client_secret=...
      ↓
-Token cached in memory for process lifetime
+Token + expires_in (86399 s / ~24 h) cached in memory
      ↓
 All GraphQL requests use cached token
-If 401 received → cache cleared → token re-fetched once
+     ↓
+Token auto-refreshed 5 minutes before expiry on next call
+If unexpected 401 received → cache cleared → token re-fetched once
 ```
+
+**Important**: Dev Dashboard app tokens expire after **24 hours**. There is no permanent `shpat_xxx` token for this app type — the token is always fetched dynamically using the client credentials grant.
 
 Webhook HMAC verification uses `SHOPIFY_CLIENT_SECRET` directly — no separate webhook signing secret is needed.
 
