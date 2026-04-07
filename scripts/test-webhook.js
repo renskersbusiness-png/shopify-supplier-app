@@ -3,18 +3,18 @@
  * Simulates a Shopify orders/create webhook for local testing.
  * Run with: node scripts/test-webhook.js
  *
- * Requires: .env file with SHOPIFY_WEBHOOK_SECRET set
+ * Requires: .env file with SHOPIFY_CLIENT_SECRET set
  */
 
 require('dotenv').config({ path: require('path').join(__dirname, '../.env') });
 const crypto = require('crypto');
 const http   = require('http');
 
-const SECRET = process.env.SHOPIFY_WEBHOOK_SECRET;
+const SECRET = process.env.SHOPIFY_CLIENT_SECRET;
 const PORT   = process.env.PORT || 3000;
 
 if (!SECRET) {
-  console.error('❌ Set SHOPIFY_WEBHOOK_SECRET in your .env file first');
+  console.error('❌ Set SHOPIFY_CLIENT_SECRET in your .env file first');
   process.exit(1);
 }
 

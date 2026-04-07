@@ -1,4 +1,4 @@
-# 📦 Shopify Supplier App
+# Shopify Supplier App
 
 > Order management middleware for Shopify dropshipping.
 > Receives orders via webhook → stores in dashboard → lets you add tracking → fulfills back to Shopify.
@@ -49,11 +49,14 @@ Edit `.env` with your values:
 
 ```
 SHOPIFY_SHOP_DOMAIN=your-store.myshopify.com
-SHOPIFY_ACCESS_TOKEN=shpat_...
-SHOPIFY_WEBHOOK_SECRET=your_secret
+SHOPIFY_CLIENT_ID=your_client_id_here
+SHOPIFY_CLIENT_SECRET=your_client_secret_here
 DASHBOARD_PASSWORD=pick_a_strong_password
 SESSION_SECRET=pick_a_long_random_string
+NODE_ENV=development
 ```
+
+See [Setting Up Shopify](#setting-up-shopify) below for where to find `SHOPIFY_CLIENT_ID` and `SHOPIFY_CLIENT_SECRET`.
 
 ### 3. Initialize the database
 
@@ -77,48 +80,60 @@ Open http://localhost:3000 — you'll see the login page.
 
 ## Setting Up Shopify
 
-### Step 1: Create a Custom App
+This app uses the **OAuth 2.0 client credentials grant** as supported by apps created in the **Shopify Dev Dashboard**. It fetches an Admin API access token automatically at startup — no manual token generation or copy-pasting required.
 
-1. Go to your Shopify Admin → **Settings** → **Apps and sales channels**
-2. Click **Develop apps**
-3. Click **Create an app**
-4. Name it (e.g. "Supplier Middleware")
-5. Click **Configure Admin API scopes**
+> **Dev Dashboard vs Custom App**: This is _not_ a Shopify Admin custom app (Settings → Apps → Develop apps). Those use a static access token. This app requires a Dev Dashboard app, which issues a `client_id` and `client_secret` and supports the `client_credentials` grant.
 
-### Step 2: Set Required API Scopes
+### Step 1: Create an app in the Shopify Dev Dashboard
 
-Select these scopes:
-- ✅ `read_orders` — read order data
-- ✅ `write_orders` — update order status
-- ✅ `read_fulfillments` — read fulfillment status
-- ✅ `write_fulfillments` — create fulfillments (push tracking)
+1. Go to the [Shopify Dev Dashboard](https://shopify.dev/dashboard) and sign in
+2. Select your Partner organisation (or create one)
+3. Click **Create app** → give it a name (e.g. "Supplier Middleware")
+4. Under **App setup**, note the **Client ID** and **Client secret** — you will need these in Step 4
+
+### Step 2: Configure Admin API scopes
+
+In your app's settings, open **Configuration** → **Admin API integration** and enable:
+
+- `read_orders`
+- `write_orders`
+- `read_fulfillments`
+- `write_fulfillments`
 
 Click **Save**.
 
-### Step 3: Install the App
+### Step 3: Install the app on your store
 
-1. Click **Install app**
-2. Copy the **Admin API access token** → paste into `.env` as `SHOPIFY_ACCESS_TOKEN`
-3. Copy your shop domain (e.g. `yourstore.myshopify.com`) → paste into `.env` as `SHOPIFY_SHOP_DOMAIN`
+1. In your app's settings, go to **Test on development store** (or **Select store**)
+2. Choose your store and click **Install app**
+3. Approve the requested permissions
 
-### Step 4: Configure Webhook
+### Step 4: Copy your credentials into `.env`
 
-1. In your Shopify admin, go to **Settings** → **Notifications** → scroll to **Webhooks**
-   - OR in your custom app → **Configuration** → **Webhooks**
-2. Click **Create webhook**
-3. Set:
+From your app's **API credentials** page:
+
+- **Client ID** → `SHOPIFY_CLIENT_ID`
+- **Client secret** → `SHOPIFY_CLIENT_SECRET`
+
+The app calls `POST /admin/oauth/access_token` with `grant_type=client_credentials` on startup to obtain a token. No token needs to be copied manually.
+
+### Step 5: Register the webhook
+
+1. In your app settings, go to **Configuration** → **Webhooks**
+2. Click **Create webhook** and set:
    - **Event**: `Order creation`
    - **Format**: JSON
    - **URL**: `https://your-deployed-app.railway.app/webhooks/orders/create`
-   - **Webhook API version**: `2024-01`
-4. Click **Save**
-5. Copy the **Signing secret** → paste into `.env` as `SHOPIFY_WEBHOOK_SECRET`
+   - **API version**: `2024-01` (matches the version used by this app's GraphQL client)
+3. Click **Save**
+
+> Webhook HMAC signatures are signed with your **Client secret** — no separate webhook signing secret is needed.
 
 ---
 
 ## Deployment
 
-### Option A: Railway (Recommended — free tier available)
+### Option A: Railway (Recommended)
 
 1. Push your code to GitHub
 2. Go to [railway.app](https://railway.app) → **New Project** → **Deploy from GitHub**
@@ -161,13 +176,12 @@ Use the ngrok URL as your Shopify webhook URL.
 ### Test the webhook manually
 
 ```bash
-# You'll need your webhook secret to generate a valid HMAC
-# Use this script to simulate an order webhook:
-
 node scripts/test-webhook.js
 ```
 
-Or send a test order from Shopify (Settings → Notifications → Webhooks → send test notification).
+This simulates a Shopify `orders/create` webhook, signing the payload with `SHOPIFY_CLIENT_SECRET`.
+
+Or send a test from Shopify: Settings → Notifications → Webhooks → send test notification.
 
 ### Test fulfillment
 
@@ -213,9 +227,12 @@ shopify-supplier-app/
 │   ├── middleware/
 │   │   └── auth.js            # Session-based dashboard auth
 │   └── shopify/
+│       ├── auth.js            # OAuth client credentials token flow
 │       └── client.js          # Shopify GraphQL API client
 ├── public/
 │   └── index.html             # Dashboard single-page app
+├── scripts/
+│   └── test-webhook.js        # Simulate a webhook locally
 ├── data/                      # SQLite DB lives here (auto-created)
 ├── .env.example               # Environment variable template
 ├── railway.toml               # Railway deployment config
@@ -224,54 +241,64 @@ shopify-supplier-app/
 
 ---
 
-## Phase 2 Roadmap
+## Environment Variables Reference
 
-When your order volume grows or your supplier gets more capabilities:
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `SHOPIFY_SHOP_DOMAIN` | Yes | `yourstore.myshopify.com` |
+| `SHOPIFY_CLIENT_ID` | Yes | Client ID from Shopify Dev Dashboard → App → API credentials |
+| `SHOPIFY_CLIENT_SECRET` | Yes | Client secret — used for token requests and webhook HMAC |
+| `DASHBOARD_PASSWORD` | Yes | Password to log into the supplier dashboard |
+| `SESSION_SECRET` | Yes | Long random string for signing session cookies |
+| `NODE_ENV` | Optional | Set to `production` for secure HTTPS-only cookies |
+| `PORT` | Optional | HTTP port (default: 3000) |
+| `DB_PATH` | Optional | SQLite file path (default: `./data/orders.db`) |
+
+---
+
+## Authentication Flow
+
+The app uses the **OAuth 2.0 client credentials grant** — no user login to Shopify required:
+
+```
+App starts → getAccessToken() called
+     ↓
+POST https://{shop}.myshopify.com/admin/oauth/access_token
+{ client_id, client_secret, grant_type: "client_credentials" }
+     ↓
+Token cached in memory for process lifetime
+     ↓
+All GraphQL requests use cached token
+If 401 received → cache cleared → token re-fetched once
+```
+
+Webhook HMAC verification uses `SHOPIFY_CLIENT_SECRET` directly — no separate webhook signing secret is needed.
+
+---
+
+## Phase 2 Roadmap
 
 ### Email automation
 - Use `nodemailer` to auto-send order details to supplier on "Mark Processing"
-- Template the email with order items, customer address, SKUs
 
 ### CSV export
 - Add `/api/orders/export.csv` endpoint
-- Auto-generate and email CSV to supplier daily/on-demand
 
 ### Google Sheets integration
-- Use Google Sheets API to write new orders to a shared sheet
-- Supplier can view/update sheet — you read tracking back from it
+- Write new orders to a shared sheet; read tracking back from it
 
-### Supplier API (when available)
-- Add a `POST /api/orders/:id/send-to-supplier` endpoint
-- Replace manual step with direct API call to supplier system
-- Zero code changes to the rest of the app
+### Supplier API
+- Add `POST /api/orders/:id/send-to-supplier` when supplier exposes an API
 
 ### Scaling (100+ orders/day)
-- Swap SQLite for PostgreSQL (change `better-sqlite3` to `pg`, minimal query changes)
+- Swap SQLite for PostgreSQL
 - Add a job queue (BullMQ + Redis) for webhook processing
-- Add email alerts for stuck orders (no tracking after N days)
-- Add multi-user support (per-user sessions)
 
 ---
 
 ## Security Notes
 
 - Webhook HMAC verification prevents fake webhook injection
-- Dashboard password uses timing-safe comparison (no brute-force timing attacks)
+- Dashboard password uses timing-safe comparison (no timing attacks)
 - Session cookies are HttpOnly + Secure in production
 - `.env` is gitignored — never commit your secrets
-- Raw webhook body is stored in DB for debugging — consider purging old entries
-
----
-
-## Environment Variables Reference
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `SHOPIFY_SHOP_DOMAIN` | ✅ | `yourstore.myshopify.com` |
-| `SHOPIFY_ACCESS_TOKEN` | ✅ | Admin API token from custom app |
-| `SHOPIFY_WEBHOOK_SECRET` | ✅ | Webhook signing secret |
-| `DASHBOARD_PASSWORD` | ✅ | Password to log into dashboard |
-| `SESSION_SECRET` | ✅ | Long random string for session signing |
-| `PORT` | Optional | Default: 3000 |
-| `DB_PATH` | Optional | Default: `./data/orders.db` |
-| `NODE_ENV` | Optional | Set to `production` for HTTPS cookies |

@@ -4,7 +4,8 @@
  * Uses the Admin GraphQL API to create fulfillments and update tracking.
  *
  * Access tokens are obtained programmatically via the client credentials
- * grant (see shopify/auth.js) — no hardcoded SHOPIFY_ACCESS_TOKEN needed.
+ * grant (see shopify/auth.js) — SHOPIFY_CLIENT_ID and SHOPIFY_CLIENT_SECRET
+ * are the only Shopify credentials required.
  */
 
 const fetch  = require('node-fetch');
