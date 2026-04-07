@@ -11,7 +11,7 @@ const crypto = require('crypto');
 const express = require('express');
 const router  = express.Router();
 
-const { createOrder, getOrderByShopifyId, logActivity } = require('../db/orders');
+const { createOrder, getOrderByShopifyId, updateOrderStatus, logActivity } = require('../db/orders');
 
 // ── HMAC Verification Middleware ──────────────────────────────────────────────
 
@@ -136,6 +136,65 @@ async function processNewOrder(payload) {
 
   console.log(`[Webhook] ✅  New order saved: ${payload.name} (ID: ${orderId})`);
 }
+
+// ── orders/paid ───────────────────────────────────────────────────────────────
+// Fired by Shopify when payment is captured.
+// Moves the order from 'pending' → 'processing'.
+// Does nothing if the order is already further along (shipped/fulfilled).
+
+router.post('/orders/paid', verifyShopifyWebhook, (req, res) => {
+  res.status(200).json({ received: true });
+
+  const shopifyOrderId = String(req.body.id);
+  const order = getOrderByShopifyId(shopifyOrderId);
+
+  if (!order) {
+    console.log(`[Webhook] orders/paid: order ${shopifyOrderId} not found in DB — skipping`);
+    return;
+  }
+
+  // Only advance from pending → processing; never go backwards
+  if (order.status !== 'pending') {
+    console.log(`[Webhook] orders/paid: order ${order.shopify_order_num} already at '${order.status}' — skipping`);
+    return;
+  }
+
+  updateOrderStatus(order.id, 'processing');
+  logActivity(order.id, 'status_change', 'Status set to "processing" (payment captured)');
+  console.log(`[Webhook] orders/paid: ${order.shopify_order_num} → processing`);
+});
+
+// ── fulfillments/create ───────────────────────────────────────────────────────
+// Fired by Shopify when a fulfillment is created (from any source).
+// Moves the order to 'shipped' unless it is already 'fulfilled'.
+// Also stores the Shopify fulfillment ID if not already set.
+
+router.post('/fulfillments/create', verifyShopifyWebhook, (req, res) => {
+  res.status(200).json({ received: true });
+
+  // Fulfillment payload uses order_id (not id) for the parent order
+  const shopifyOrderId = String(req.body.order_id);
+  const order = getOrderByShopifyId(shopifyOrderId);
+
+  if (!order) {
+    console.log(`[Webhook] fulfillments/create: order ${shopifyOrderId} not found in DB — skipping`);
+    return;
+  }
+
+  // Never downgrade a fulfilled order
+  if (order.status === 'fulfilled') {
+    console.log(`[Webhook] fulfillments/create: order ${order.shopify_order_num} already fulfilled — skipping`);
+    return;
+  }
+
+  updateOrderStatus(order.id, 'shipped');
+  logActivity(
+    order.id,
+    'status_change',
+    `Status set to "shipped" (Shopify fulfillment ${req.body.id} created)`
+  );
+  console.log(`[Webhook] fulfillments/create: ${order.shopify_order_num} → shipped`);
+});
 
 // ── Shopify webhook health check ──────────────────────────────────────────────
 // Shopify sometimes sends a test ping
