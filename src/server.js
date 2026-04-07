@@ -22,23 +22,26 @@ app.use((req, res, next) => {
 
 // ── Raw body capture for webhook HMAC verification ───────────────────────────
 // IMPORTANT: This MUST come before express.json() / express.urlencoded()
-// We save the raw body to req.rawBody so the webhook route can verify HMAC.
-app.use('/webhooks', express.raw({
-  type: 'application/json',
-  verify: (req, res, buf) => {
-    req.rawBody = buf.toString('utf8');
-  },
-}));
-
-// After the webhook route captures raw body, parse the body as JSON
-// (the webhook handler will access req.body as parsed JSON too)
+//
+// We read the stream directly rather than using express.raw() + verify because
+// express.raw() only fires its verify callback when Content-Type matches exactly.
+// Reverse proxies (Railway, Render, etc.) often append "; charset=utf-8" to the
+// Content-Type header, which breaks the match and leaves req.rawBody undefined.
+// Direct stream reading is Content-Type-agnostic and always works.
 app.use('/webhooks', (req, res, next) => {
-  try {
-    req.body = JSON.parse(req.rawBody);
-  } catch {
-    req.body = {};
-  }
-  next();
+  const chunks = [];
+  req.on('data', chunk => chunks.push(chunk));
+  req.on('end', () => {
+    const rawBuf  = Buffer.concat(chunks);
+    req.rawBody   = rawBuf.toString('utf8');
+    try {
+      req.body = JSON.parse(req.rawBody);
+    } catch {
+      req.body = {};
+    }
+    next();
+  });
+  req.on('error', next);
 });
 
 // ── Standard body parsers (for dashboard API routes) ─────────────────────────

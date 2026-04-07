@@ -16,33 +16,50 @@ const { createOrder, getOrderByShopifyId, logActivity } = require('../db/orders'
 // ── HMAC Verification Middleware ──────────────────────────────────────────────
 
 function verifyShopifyWebhook(req, res, next) {
-  const hmacHeader = req.headers['x-shopify-hmac-sha256'];
+  // ── Debug logging (remove once webhook verification is confirmed working) ──
+  console.log('[Webhook] rawBody exists:', !!req.rawBody);
+  console.log('[Webhook] rawBody length:', req.rawBody ? req.rawBody.length : 0);
+
+  const hmacHeader = (req.headers['x-shopify-hmac-sha256'] || '').trim();
+  console.log('[Webhook] Received HMAC header:', hmacHeader || '(missing)');
 
   if (!hmacHeader) {
     console.warn('[Webhook] Missing HMAC header — rejecting request');
     return res.status(401).json({ error: 'Missing HMAC header' });
   }
 
-  // For Dev Dashboard (Partner) apps the HMAC is signed with the client secret.
+  // Dev Dashboard apps: HMAC is signed with SHOPIFY_CLIENT_SECRET
   const secret = process.env.SHOPIFY_CLIENT_SECRET;
   if (!secret) {
     console.error('[Webhook] SHOPIFY_CLIENT_SECRET is not set!');
     return res.status(500).json({ error: 'Webhook secret not configured' });
   }
 
-  // req.rawBody is set by the raw body parser in server.js
-  const digest = crypto
+  if (!req.rawBody) {
+    console.error('[Webhook] req.rawBody is undefined — raw body middleware did not run');
+    return res.status(500).json({ error: 'Raw body not captured' });
+  }
+
+  // Compute HMAC-SHA256 of the exact raw request body, base64-encoded
+  const calculated = crypto
     .createHmac('sha256', secret)
     .update(req.rawBody, 'utf8')
     .digest('base64');
 
-  // Use timingSafeEqual to prevent timing attacks
-  try {
-    const digestBuf = Buffer.from(digest);
-    const headerBuf = Buffer.from(hmacHeader);
+  console.log('[Webhook] Calculated HMAC:  ', calculated);
 
-    if (digestBuf.length !== headerBuf.length ||
-        !crypto.timingSafeEqual(digestBuf, headerBuf)) {
+  // Timing-safe comparison — both buffers must be the same length
+  try {
+    const calcBuf     = Buffer.from(calculated, 'utf8');
+    const receivedBuf = Buffer.from(hmacHeader, 'utf8');
+
+    const valid =
+      calcBuf.length === receivedBuf.length &&
+      crypto.timingSafeEqual(calcBuf, receivedBuf);
+
+    console.log('[Webhook] HMAC valid:', valid);
+
+    if (!valid) {
       console.warn('[Webhook] HMAC mismatch — rejecting request');
       return res.status(401).json({ error: 'Invalid HMAC signature' });
     }
