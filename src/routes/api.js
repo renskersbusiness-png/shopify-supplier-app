@@ -14,6 +14,14 @@ const { createFulfillment } = require('../shopify/client');
 // All API routes require login
 router.use(requireAuth);
 
+// Prevent browsers from caching API responses.
+// Without this, a browser may serve a stale 401 from cache immediately after
+// login, making it appear as though auth is not working.
+router.use((req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store');
+  next();
+});
+
 // ── GET /api/orders — list orders with optional filters ───────────────────────
 
 router.get('/orders', (req, res) => {
@@ -77,6 +85,10 @@ router.patch('/orders/:id/status', (req, res) => {
 
     const order = db.getOrderById(req.params.id);
     if (!order) return res.status(404).json({ error: 'Order not found' });
+
+    if (order.status === 'fulfilled') {
+      return res.status(400).json({ error: 'Cannot change the status of a fulfilled order' });
+    }
 
     db.updateOrderStatus(order.id, status);
     db.logActivity(order.id, 'status_change', `Status changed to "${status}"`);

@@ -85,9 +85,14 @@ function updateOrderStatus(id, status) {
 }
 
 function updateTracking(id, { tracking_number, tracking_carrier, tracking_url }) {
+  // Do not downgrade a fulfilled order — update tracking fields only.
+  // For every other status, also advance to 'shipped'.
   return getDb().prepare(`
     UPDATE orders
-    SET tracking_number = ?, tracking_carrier = ?, tracking_url = ?, status = 'shipped'
+    SET tracking_number = ?,
+        tracking_carrier = ?,
+        tracking_url = ?,
+        status = CASE WHEN status = 'fulfilled' THEN 'fulfilled' ELSE 'shipped' END
     WHERE id = ?
   `).run(tracking_number, tracking_carrier, tracking_url || null, id);
 }

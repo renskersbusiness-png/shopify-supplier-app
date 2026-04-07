@@ -802,6 +802,12 @@ async function api(url, method = 'GET', body) {
   };
   if (body) opts.body = JSON.stringify(body);
   const r = await fetch(url, opts);
+  // Session expired or not logged in — redirect to login immediately.
+  // This handles both initial load and mid-session expiry (auto-refresh).
+  if (r.status === 401) {
+    window.location.href = '/login';
+    return new Promise(() => {}); // never resolves; redirect is in progress
+  }
   const json = await r.json();
   if (!r.ok) throw new Error(json.error || `HTTP ${r.status}`);
   return json;

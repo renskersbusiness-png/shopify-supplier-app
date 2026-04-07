@@ -70,7 +70,9 @@ app.use(session({
 }));
 
 // ── Static files (dashboard CSS/JS) ──────────────────────────────────────────
-app.use(express.static(path.join(__dirname, '../public')));
+// index:false prevents express.static from serving public/index.html for GET /
+// That request must fall through to the dashboard router so requireAuth runs.
+app.use(express.static(path.join(__dirname, '../public'), { index: false }));
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 
