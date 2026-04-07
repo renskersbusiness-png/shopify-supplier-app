@@ -797,7 +797,8 @@ async function saveNotes(id) {
 async function api(url, method = 'GET', body) {
   const opts = {
     method,
-    headers: { 'Content-Type': 'application/json' },
+    headers:     { 'Content-Type': 'application/json' },
+    credentials: 'include',
   };
   if (body) opts.body = JSON.stringify(body);
   const r = await fetch(url, opts);
