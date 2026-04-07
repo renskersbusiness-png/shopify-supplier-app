@@ -78,7 +78,7 @@ router.get('/login', (req, res) => {
 <body>
   <div class="card">
     <h1>📦 Order Dashboard</h1>
-    <p>Enter your password to access the supplier management dashboard.</p>
+    <p>Enter your password to access the order management dashboard.</p>
     <form method="POST" action="/login">
       <label for="password">Password</label>
       <input type="password" id="password" name="password" placeholder="Enter password" autofocus required>
@@ -92,38 +92,45 @@ router.get('/login', (req, res) => {
 
 router.post('/login', (req, res) => {
   const { password } = req.body;
-  const expected = process.env.DASHBOARD_PASSWORD;
+  const adminPw    = process.env.ADMIN_PASSWORD;
+  const supplierPw = process.env.SUPPLIER_PASSWORD;
 
-  if (!expected) {
-    return res.status(500).send('DASHBOARD_PASSWORD is not configured.');
+  if (!adminPw || !supplierPw) {
+    return res.status(500).send('ADMIN_PASSWORD and SUPPLIER_PASSWORD must be configured.');
   }
 
-  // Constant-time comparison to prevent timing attacks
-  let match = false;
-  try {
-    const a = Buffer.from(password || '');
-    const b = Buffer.from(expected);
-    match = a.length === b.length && require('crypto').timingSafeEqual(a, b);
-  } catch { match = false; }
+  const crypto = require('crypto');
 
-  if (match) {
-    req.session.authenticated = true;
-    const returnTo = req.session.returnTo || '/';
-    delete req.session.returnTo;
-    // Save session to store before redirecting. Without this, the redirect
-    // fires before the async write completes and the next request sees an
-    // empty session → 401 on every API call immediately after login.
-    req.session.save((err) => {
-      if (err) {
-        console.error('[Login] Session save failed:', err);
-        return res.status(500).send('Login failed — please try again.');
-      }
-      res.redirect(returnTo);
-    });
-    return;
+  // Constant-time comparison — always run both comparisons to prevent timing leaks
+  function safeEq(input, expected) {
+    try {
+      const a = Buffer.from(input || '');
+      const b = Buffer.from(expected);
+      return a.length === b.length && crypto.timingSafeEqual(a, b);
+    } catch { return false; }
   }
 
-  res.redirect('/login?error=1');
+  const isAdmin    = safeEq(password, adminPw);
+  const isSupplier = !isAdmin && safeEq(password, supplierPw);
+
+  const role = isAdmin ? 'admin' : isSupplier ? 'supplier' : null;
+
+  if (!role) return res.redirect('/login?error=1');
+
+  req.session.authenticated = true;
+  req.session.role = role;
+  const returnTo = req.session.returnTo || '/';
+  delete req.session.returnTo;
+
+  // Save session before redirecting — async write must complete first or the
+  // next request will see an empty session and return 401.
+  req.session.save((err) => {
+    if (err) {
+      console.error('[Login] Session save failed:', err);
+      return res.status(500).send('Login failed — please try again.');
+    }
+    res.redirect(returnTo);
+  });
 });
 
 router.post('/logout', (req, res) => {

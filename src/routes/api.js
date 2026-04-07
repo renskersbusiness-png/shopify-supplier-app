@@ -22,6 +22,12 @@ router.use((req, res, next) => {
   next();
 });
 
+// ── GET /api/me — current session role ───────────────────────────────────────
+
+router.get('/me', (req, res) => {
+  res.json({ role: req.session.role || 'supplier' });
+});
+
 // ── GET /api/orders — list orders with optional filters ───────────────────────
 
 router.get('/orders', (req, res) => {
@@ -29,11 +35,12 @@ router.get('/orders', (req, res) => {
     const { status, search, page = 1 } = req.query;
     const limit  = 25;
     const offset = (parseInt(page) - 1) * limit;
+    const isAdmin = req.session.role === 'admin';
 
-    // Hide unpaid (pending) orders from the supplier view by default.
-    // Only exclude when no specific status filter is active so the supplier
-    // can still explicitly filter by status if needed.
-    const excludePending = !status || status === 'all';
+    // Suppliers never see pending (unpaid) orders.
+    // Admins see all orders — unless they explicitly filter by a specific status,
+    // in which case excludePending is irrelevant anyway.
+    const excludePending = !isAdmin && (!status || status === 'all');
 
     const { orders, total } = db.getAllOrders({ status, search, limit, offset, excludePending });
 
@@ -71,7 +78,8 @@ router.get('/orders/:id', (req, res) => {
 
 router.get('/stats', (req, res) => {
   try {
-    res.json(db.getStats({ excludePending: true }));
+    const isAdmin = req.session.role === 'admin';
+    res.json(db.getStats({ excludePending: !isAdmin }));
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch stats' });
   }
@@ -93,6 +101,11 @@ router.patch('/orders/:id/status', (req, res) => {
 
     if (order.status === 'fulfilled') {
       return res.status(400).json({ error: 'Cannot change the status of a fulfilled order' });
+    }
+
+    // Suppliers cannot act on unpaid (pending) orders
+    if (req.session.role !== 'admin' && order.status === 'pending') {
+      return res.status(403).json({ error: 'Order not yet confirmed as paid' });
     }
 
     db.updateOrderStatus(order.id, status);
@@ -147,6 +160,11 @@ router.post('/orders/:id/fulfill', async (req, res) => {
 
     if (order.status === 'fulfilled') {
       return res.status(400).json({ error: 'Order is already fulfilled' });
+    }
+
+    // Suppliers cannot fulfill unpaid (pending) orders
+    if (req.session.role !== 'admin' && order.status === 'pending') {
+      return res.status(403).json({ error: 'Order not yet confirmed as paid' });
     }
 
     console.log(`[Fulfill] Creating fulfillment for order ${order.shopify_order_num}...`);

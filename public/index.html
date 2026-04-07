@@ -348,7 +348,7 @@
       <span class="icon">🗂</span>
       <span>All Orders</span>
     </div>
-    <div class="nav-item" onclick="showView('pending')">
+    <div class="nav-item" id="nav-pending" onclick="showView('pending')">
       <span class="icon">⏳</span>
       <span>Pending</span>
     </div>
@@ -366,6 +366,9 @@
     </div>
   </nav>
   <div class="sidebar-footer">
+    <div style="padding:6px 12px 10px;font-size:11px;color:#4b5563;font-weight:500;text-transform:uppercase;letter-spacing:0.05em">
+      <span id="role-label"></span>
+    </div>
     <form method="POST" action="/logout" style="margin:0">
       <button type="submit" class="nav-item" style="width:100%; background:none; border:none; font-size:13px; color:#9ca3af;">
         <span class="icon">🚪</span>
@@ -389,7 +392,7 @@
         <div class="stat-label">Total</div>
         <div class="stat-value" id="stat-total">—</div>
       </div>
-      <div class="stat-card pending" onclick="filterByStatus('pending')">
+      <div class="stat-card pending" id="stat-card-pending" onclick="filterByStatus('pending')">
         <div class="stat-label">Pending</div>
         <div class="stat-value" id="stat-pending">—</div>
       </div>
@@ -464,14 +467,29 @@ let currentStatus = 'all';
 let currentSearch = '';
 let currentPage   = 1;
 let searchTimer   = null;
+let userRole      = 'supplier'; // default until /api/me responds
 
 // ─── Init ───────────────────────────────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
+  try {
+    const me = await api('/api/me');
+    userRole = me.role || 'supplier';
+  } catch(e) { /* keep default 'supplier' if request fails */ }
+  applyRoleUI();
   loadStats();
   loadOrders();
   // Auto-refresh every 60 seconds
   setInterval(() => { loadStats(); loadOrders(); }, 60000);
 });
+
+function applyRoleUI() {
+  const isAdmin = userRole === 'admin';
+  // Show/hide the Pending nav item and stat card — suppliers never see pending orders
+  document.getElementById('nav-pending').style.display        = isAdmin ? '' : 'none';
+  document.getElementById('stat-card-pending').style.display  = isAdmin ? '' : 'none';
+  // Show role label in sidebar footer
+  document.getElementById('role-label').textContent = isAdmin ? 'Admin' : 'Supplier';
+}
 
 // ─── Stats ──────────────────────────────────────────────────────────────────
 async function loadStats() {
@@ -602,7 +620,7 @@ function renderOrderDetail(o, log) {
       </div>
 
       <div class="action-bar">
-        ${o.status === 'pending' ? `
+        ${o.status === 'pending' && userRole === 'admin' ? `
           <button class="btn btn-primary btn-sm" onclick="setStatus(${o.id},'processing')">
             ⚙️ Mark Processing
           </button>` : ''}

@@ -1,13 +1,11 @@
 /**
  * middleware/auth.js
- * Simple password-based protection for the dashboard.
- * This keeps the dashboard private — only you should access it.
- *
- * For production, you could replace this with proper OAuth/SSO.
+ * Password-based protection for the dashboard.
+ * Supports two roles: 'admin' and 'supplier', determined at login by which
+ * password was entered (ADMIN_PASSWORD vs SUPPLIER_PASSWORD).
  */
 
 function requireAuth(req, res, next) {
-  // Allow access if already authenticated via session
   if (req.session && req.session.authenticated) {
     return next();
   }
@@ -23,4 +21,17 @@ function requireAuth(req, res, next) {
   res.redirect('/login');
 }
 
-module.exports = { requireAuth };
+// Middleware factory — restricts a route to a specific role.
+// Only used for routes that must be admin-only; most role logic lives in the
+// route handlers themselves so they can return role-appropriate data.
+function requireRole(role) {
+  return (req, res, next) => {
+    if (req.session && req.session.role === role) return next();
+    if (req.originalUrl.startsWith('/api')) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    res.redirect('/login');
+  };
+}
+
+module.exports = { requireAuth, requireRole };
