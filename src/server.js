@@ -34,6 +34,8 @@ app.use('/webhooks', (req, res, next) => {
   req.on('end', () => {
     const rawBuf  = Buffer.concat(chunks);
     req.rawBody   = rawBuf.toString('utf8');
+    // Tell body-parser the body is already read so express.json() skips this request
+    req._body     = true;
     try {
       req.body = JSON.parse(req.rawBody);
     } catch {
@@ -91,6 +93,8 @@ app.use((err, req, res, next) => {
 });
 
 // ── Start ─────────────────────────────────────────────────────────────────────
+const { syncRecentOrders } = require('./shopify/client');
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`
@@ -103,6 +107,11 @@ app.listen(PORT, () => {
   │  Health:     GET  /health                │
   └──────────────────────────────────────────┘
   `);
+
+  // Fetch recent orders so the dashboard is populated immediately on startup
+  syncRecentOrders().catch(err => {
+    console.error('[Sync] Initial order sync failed:', err.message);
+  });
 });
 
 module.exports = app;

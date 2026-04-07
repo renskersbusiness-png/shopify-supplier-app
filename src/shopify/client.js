@@ -194,8 +194,82 @@ function buildTrackingUrl(carrier, trackingNumber) {
   return urls[key] || `https://parcelsapp.com/en/tracking/${trackingNumber}`;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Startup order sync
+// Fetches the 5 most recent orders from the REST API and inserts any that
+// are not already in the database. Runs once on server start so the dashboard
+// shows real data immediately without waiting for a webhook.
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function syncRecentOrders() {
+  const { createOrder, getOrderByShopifyId, logActivity } = require('../db/orders');
+
+  console.log('[Sync] Initial order sync started');
+
+  const token  = await getAccessToken();
+  const domain = process.env.SHOPIFY_SHOP_DOMAIN;
+
+  const res = await fetch(
+    `https://${domain}/admin/api/2026-04/orders.json?limit=5&status=any`,
+    { headers: { 'X-Shopify-Access-Token': token } }
+  );
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Shopify orders fetch failed (${res.status}): ${text}`);
+  }
+
+  const { orders } = await res.json();
+  console.log(`[Sync] Fetched ${orders.length} orders`);
+
+  let inserted = 0;
+  for (const order of orders) {
+    const shopifyOrderId = String(order.id);
+    if (getOrderByShopifyId(shopifyOrderId)) continue; // already exists
+
+    const shippingAddress = order.shipping_address || {};
+    const billingAddress  = order.billing_address  || {};
+    const address = Object.keys(shippingAddress).length ? shippingAddress : billingAddress;
+
+    const customer = order.customer || {};
+    const customerName = [
+      address.first_name || customer.first_name,
+      address.last_name  || customer.last_name,
+    ].filter(Boolean).join(' ') || order.email || 'Unknown';
+
+    const lineItems = (order.line_items || []).map(item => ({
+      id:       item.id,
+      title:    item.title,
+      variant:  item.variant_title,
+      sku:      item.sku,
+      quantity: item.quantity,
+      price:    item.price,
+    }));
+
+    const result = createOrder({
+      shopify_order_id:   shopifyOrderId,
+      shopify_order_num:  order.name || `#${order.order_number}`,
+      customer_name:      customerName,
+      customer_email:     order.email || customer.email || null,
+      customer_phone:     address.phone || order.phone  || null,
+      shipping_address:   JSON.stringify(address),
+      line_items:         JSON.stringify(lineItems),
+      total_price:        order.total_price || '0.00',
+      currency:           order.currency    || 'USD',
+      raw_payload:        JSON.stringify(order),
+      shopify_created_at: order.created_at  || null,
+    });
+
+    logActivity(result.lastInsertRowid, 'order_received', `Order ${order.name} synced on startup`);
+    inserted++;
+  }
+
+  console.log(`[Sync] Inserted ${inserted} new orders`);
+}
+
 module.exports = {
   shopifyGraphQL,
   getFulfillmentOrders,
   createFulfillment,
+  syncRecentOrders,
 };
