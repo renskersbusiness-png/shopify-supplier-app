@@ -1,0 +1,851 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Order Dashboard</title>
+  <style>
+    /* ─── Reset & Base ─────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #f8fafc;
+      color: #111827;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    a { text-decoration: none; color: inherit; }
+    button { cursor: pointer; font-family: inherit; }
+
+    /* ─── Layout ──────────────────────────────────────────────────── */
+    .sidebar {
+      position: fixed; top: 0; left: 0; bottom: 0;
+      width: 220px;
+      background: #111827;
+      color: #e5e7eb;
+      display: flex; flex-direction: column;
+      z-index: 10;
+    }
+    .sidebar-logo {
+      padding: 20px 20px 16px;
+      font-size: 15px; font-weight: 600; color: #fff;
+      border-bottom: 1px solid #1f2937;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .sidebar-nav { flex: 1; padding: 12px 8px; }
+    .nav-item {
+      display: flex; align-items: center; gap: 10px;
+      padding: 9px 12px;
+      border-radius: 8px;
+      font-size: 13px; color: #9ca3af;
+      cursor: pointer;
+      transition: background 0.12s, color 0.12s;
+      margin-bottom: 2px;
+    }
+    .nav-item:hover { background: #1f2937; color: #e5e7eb; }
+    .nav-item.active { background: #6366f1; color: #fff; }
+    .nav-item .icon { font-size: 15px; width: 18px; text-align: center; }
+    .sidebar-footer {
+      padding: 12px 8px;
+      border-top: 1px solid #1f2937;
+    }
+    .main {
+      margin-left: 220px;
+      min-height: 100vh;
+      padding: 0;
+    }
+    .topbar {
+      background: white;
+      border-bottom: 1px solid #e5e7eb;
+      padding: 16px 28px;
+      display: flex; align-items: center; gap: 16px;
+      position: sticky; top: 0; z-index: 5;
+    }
+    .topbar-title { font-size: 17px; font-weight: 600; flex: 1; }
+    .content { padding: 24px 28px; }
+
+    /* ─── Stat Cards ──────────────────────────────────────────────── */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 14px;
+      margin-bottom: 24px;
+    }
+    .stat-card {
+      background: white;
+      border: 1px solid #e5e7eb;
+      border-radius: 10px;
+      padding: 16px 18px;
+      cursor: pointer;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    .stat-card:hover { border-color: #6366f1; box-shadow: 0 0 0 3px rgba(99,102,241,0.08); }
+    .stat-card.active { border-color: #6366f1; background: #eef2ff; }
+    .stat-label { font-size: 11px; font-weight: 500; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.04em; }
+    .stat-value { font-size: 26px; font-weight: 700; color: #111827; margin-top: 4px; }
+    .stat-card.pending .stat-value   { color: #f59e0b; }
+    .stat-card.processing .stat-value { color: #3b82f6; }
+    .stat-card.shipped .stat-value   { color: #8b5cf6; }
+    .stat-card.fulfilled .stat-value  { color: #10b981; }
+
+    /* ─── Filters / Search ────────────────────────────────────────── */
+    .toolbar {
+      display: flex; align-items: center; gap: 10px;
+      margin-bottom: 16px;
+    }
+    .search-wrap { position: relative; flex: 1; max-width: 320px; }
+    .search-wrap input {
+      width: 100%;
+      padding: 8px 12px 8px 34px;
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      font-size: 13px;
+      outline: none;
+      background: white;
+      transition: border-color 0.15s;
+    }
+    .search-wrap input:focus { border-color: #6366f1; }
+    .search-icon {
+      position: absolute; left: 10px; top: 50%; transform: translateY(-50%);
+      color: #9ca3af; font-size: 14px;
+    }
+    .btn {
+      padding: 8px 16px;
+      border-radius: 8px;
+      font-size: 13px; font-weight: 500;
+      border: 1px solid transparent;
+      transition: all 0.12s;
+      display: inline-flex; align-items: center; gap: 6px;
+    }
+    .btn-primary { background: #6366f1; color: white; border-color: #6366f1; }
+    .btn-primary:hover { background: #4f46e5; }
+    .btn-secondary { background: white; color: #374151; border-color: #d1d5db; }
+    .btn-secondary:hover { background: #f9fafb; }
+    .btn-success { background: #10b981; color: white; border-color: #10b981; }
+    .btn-success:hover { background: #059669; }
+    .btn-danger { background: #ef4444; color: white; border-color: #ef4444; }
+    .btn-danger:hover { background: #dc2626; }
+    .btn-sm { padding: 5px 10px; font-size: 12px; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    /* ─── Orders Table ────────────────────────────────────────────── */
+    .table-wrap {
+      background: white;
+      border: 1px solid #e5e7eb;
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    table { width: 100%; border-collapse: collapse; }
+    thead { background: #f9fafb; }
+    th {
+      padding: 11px 16px;
+      text-align: left;
+      font-size: 11px; font-weight: 600;
+      color: #6b7280;
+      text-transform: uppercase; letter-spacing: 0.04em;
+      border-bottom: 1px solid #e5e7eb;
+    }
+    td {
+      padding: 13px 16px;
+      border-bottom: 1px solid #f3f4f6;
+      vertical-align: middle;
+    }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: #f9fafb; }
+    .order-num { font-weight: 600; color: #111827; }
+    .customer-name { font-weight: 500; }
+    .customer-email { color: #6b7280; font-size: 12px; }
+
+    /* ─── Status Badges ───────────────────────────────────────────── */
+    .badge {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 3px 8px;
+      border-radius: 20px;
+      font-size: 11px; font-weight: 600;
+      text-transform: uppercase; letter-spacing: 0.03em;
+    }
+    .badge::before { content: ''; width: 5px; height: 5px; border-radius: 50%; display: block; }
+    .badge-pending    { background: #fef3c7; color: #d97706; } .badge-pending::before    { background: #d97706; }
+    .badge-processing { background: #dbeafe; color: #2563eb; } .badge-processing::before { background: #2563eb; }
+    .badge-shipped    { background: #ede9fe; color: #7c3aed; } .badge-shipped::before    { background: #7c3aed; }
+    .badge-fulfilled  { background: #d1fae5; color: #059669; } .badge-fulfilled::before  { background: #059669; }
+
+    /* ─── Pagination ──────────────────────────────────────────────── */
+    .pagination {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px 16px;
+      border-top: 1px solid #f3f4f6;
+      background: white;
+    }
+    .pagination-info { font-size: 12px; color: #6b7280; }
+    .pagination-btns { display: flex; gap: 6px; }
+
+    /* ─── Order Detail Modal ──────────────────────────────────────── */
+    .modal-overlay {
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.4);
+      z-index: 100;
+      display: flex; align-items: flex-start; justify-content: flex-end;
+      opacity: 0; pointer-events: none;
+      transition: opacity 0.2s;
+    }
+    .modal-overlay.open { opacity: 1; pointer-events: all; }
+    .modal-panel {
+      background: white;
+      width: 520px;
+      height: 100vh;
+      overflow-y: auto;
+      box-shadow: -8px 0 40px rgba(0,0,0,0.15);
+      transform: translateX(100%);
+      transition: transform 0.25s cubic-bezier(0.32, 0.72, 0, 1);
+    }
+    .modal-overlay.open .modal-panel { transform: translateX(0); }
+    .modal-header {
+      padding: 20px 24px 16px;
+      border-bottom: 1px solid #e5e7eb;
+      display: flex; align-items: center; gap: 12px;
+      position: sticky; top: 0; background: white; z-index: 2;
+    }
+    .modal-header h2 { font-size: 16px; font-weight: 600; flex: 1; }
+    .modal-close {
+      width: 32px; height: 32px;
+      border-radius: 8px;
+      background: #f3f4f6; border: none;
+      font-size: 18px; color: #6b7280;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .modal-close:hover { background: #e5e7eb; }
+    .modal-body { padding: 20px 24px; }
+    .section { margin-bottom: 22px; }
+    .section-title {
+      font-size: 11px; font-weight: 600; color: #9ca3af;
+      text-transform: uppercase; letter-spacing: 0.05em;
+      margin-bottom: 10px;
+    }
+    .field-row {
+      display: flex; gap: 8px; align-items: flex-start;
+      padding: 6px 0;
+      border-bottom: 1px solid #f3f4f6;
+    }
+    .field-row:last-child { border-bottom: none; }
+    .field-label { color: #6b7280; min-width: 110px; font-size: 13px; }
+    .field-value { color: #111827; font-size: 13px; font-weight: 500; flex: 1; }
+
+    .line-item {
+      display: flex; justify-content: space-between;
+      padding: 7px 10px;
+      background: #f9fafb;
+      border-radius: 6px;
+      margin-bottom: 4px;
+      font-size: 13px;
+    }
+    .line-item-title { font-weight: 500; }
+    .line-item-qty { color: #6b7280; }
+
+    .action-bar {
+      display: flex; gap: 8px; flex-wrap: wrap;
+      padding: 16px 0;
+      border-top: 1px solid #e5e7eb;
+      border-bottom: 1px solid #e5e7eb;
+      margin-bottom: 20px;
+    }
+
+    .tracking-form {
+      background: #f9fafb;
+      border: 1px solid #e5e7eb;
+      border-radius: 10px;
+      padding: 16px;
+      margin-bottom: 20px;
+    }
+    .tracking-form h3 { font-size: 13px; font-weight: 600; margin-bottom: 12px; }
+    .form-row { display: flex; gap: 10px; margin-bottom: 10px; }
+    .form-group { flex: 1; }
+    .form-group label { display: block; font-size: 12px; font-weight: 500; color: #6b7280; margin-bottom: 4px; }
+    .form-group input, .form-group select {
+      width: 100%;
+      padding: 8px 10px;
+      border: 1px solid #d1d5db;
+      border-radius: 6px;
+      font-size: 13px;
+      outline: none;
+      background: white;
+      transition: border-color 0.15s;
+    }
+    .form-group input:focus, .form-group select:focus { border-color: #6366f1; }
+
+    .notes-area {
+      width: 100%;
+      padding: 8px 10px;
+      border: 1px solid #d1d5db;
+      border-radius: 6px;
+      font-size: 13px;
+      font-family: inherit;
+      resize: vertical;
+      min-height: 80px;
+      outline: none;
+    }
+    .notes-area:focus { border-color: #6366f1; }
+
+    .activity-log { margin-top: 20px; }
+    .log-entry {
+      display: flex; gap: 10px; align-items: flex-start;
+      padding: 8px 0;
+      border-bottom: 1px solid #f3f4f6;
+    }
+    .log-dot { width: 8px; height: 8px; border-radius: 50%; background: #d1d5db; margin-top: 5px; flex-shrink: 0; }
+    .log-entry.fulfilled .log-dot { background: #10b981; }
+    .log-entry.tracking_added .log-dot { background: #8b5cf6; }
+    .log-entry.status_change .log-dot { background: #3b82f6; }
+    .log-text { font-size: 12px; color: #374151; }
+    .log-time { font-size: 11px; color: #9ca3af; display: block; margin-top: 2px; }
+
+    .toast {
+      position: fixed;
+      bottom: 28px; right: 28px;
+      background: #111827;
+      color: white;
+      padding: 12px 18px;
+      border-radius: 10px;
+      font-size: 13px;
+      font-weight: 500;
+      z-index: 9999;
+      opacity: 0; transform: translateY(8px);
+      transition: opacity 0.2s, transform 0.2s;
+      pointer-events: none;
+    }
+    .toast.show { opacity: 1; transform: translateY(0); }
+    .toast.success { background: #065f46; }
+    .toast.error   { background: #7f1d1d; }
+
+    .empty {
+      text-align: center;
+      padding: 60px 20px;
+      color: #9ca3af;
+    }
+    .empty-icon { font-size: 40px; margin-bottom: 12px; }
+    .empty h3 { font-size: 15px; font-weight: 500; color: #6b7280; margin-bottom: 6px; }
+
+    .loading { opacity: 0.6; pointer-events: none; }
+
+    @media (max-width: 900px) {
+      .sidebar { width: 60px; }
+      .nav-item span, .sidebar-logo span { display: none; }
+      .main { margin-left: 60px; }
+      .stats-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── Sidebar ──────────────────────────────────────────────────────────── -->
+<aside class="sidebar">
+  <div class="sidebar-logo">
+    <span>📦</span>
+    <span>Supplier Hub</span>
+  </div>
+  <nav class="sidebar-nav">
+    <div class="nav-item active" onclick="showView('orders')">
+      <span class="icon">🗂</span>
+      <span>All Orders</span>
+    </div>
+    <div class="nav-item" onclick="showView('pending')">
+      <span class="icon">⏳</span>
+      <span>Pending</span>
+    </div>
+    <div class="nav-item" onclick="showView('processing')">
+      <span class="icon">⚙️</span>
+      <span>Processing</span>
+    </div>
+    <div class="nav-item" onclick="showView('shipped')">
+      <span class="icon">🚚</span>
+      <span>Shipped</span>
+    </div>
+    <div class="nav-item" onclick="showView('fulfilled')">
+      <span class="icon">✅</span>
+      <span>Fulfilled</span>
+    </div>
+  </nav>
+  <div class="sidebar-footer">
+    <form method="POST" action="/logout" style="margin:0">
+      <button type="submit" class="nav-item" style="width:100%; background:none; border:none; font-size:13px; color:#9ca3af;">
+        <span class="icon">🚪</span>
+        <span>Log out</span>
+      </button>
+    </form>
+  </div>
+</aside>
+
+<!-- ── Main Content ─────────────────────────────────────────────────────── -->
+<main class="main">
+  <div class="topbar">
+    <div class="topbar-title" id="page-title">All Orders</div>
+    <button class="btn btn-secondary btn-sm" onclick="loadOrders()">↻ Refresh</button>
+  </div>
+
+  <div class="content">
+    <!-- Stats -->
+    <div class="stats-grid" id="stats-grid">
+      <div class="stat-card" onclick="filterByStatus('all')">
+        <div class="stat-label">Total</div>
+        <div class="stat-value" id="stat-total">—</div>
+      </div>
+      <div class="stat-card pending" onclick="filterByStatus('pending')">
+        <div class="stat-label">Pending</div>
+        <div class="stat-value" id="stat-pending">—</div>
+      </div>
+      <div class="stat-card processing" onclick="filterByStatus('processing')">
+        <div class="stat-label">Processing</div>
+        <div class="stat-value" id="stat-processing">—</div>
+      </div>
+      <div class="stat-card shipped" onclick="filterByStatus('shipped')">
+        <div class="stat-label">Shipped</div>
+        <div class="stat-value" id="stat-shipped">—</div>
+      </div>
+      <div class="stat-card fulfilled" onclick="filterByStatus('fulfilled')">
+        <div class="stat-label">Fulfilled</div>
+        <div class="stat-value" id="stat-fulfilled">—</div>
+      </div>
+    </div>
+
+    <!-- Toolbar -->
+    <div class="toolbar">
+      <div class="search-wrap">
+        <span class="search-icon">🔍</span>
+        <input type="text" id="search-input" placeholder="Search orders, customer…" oninput="handleSearch(this.value)">
+      </div>
+    </div>
+
+    <!-- Table -->
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Order</th>
+            <th>Customer</th>
+            <th>Items</th>
+            <th>Total</th>
+            <th>Status</th>
+            <th>Date</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="orders-tbody">
+          <tr><td colspan="7" class="empty"><div class="empty-icon">⏳</div><h3>Loading...</h3></td></tr>
+        </tbody>
+      </table>
+      <div class="pagination" id="pagination" style="display:none">
+        <div class="pagination-info" id="pagination-info"></div>
+        <div class="pagination-btns">
+          <button class="btn btn-secondary btn-sm" id="prev-btn" onclick="changePage(-1)">← Prev</button>
+          <button class="btn btn-secondary btn-sm" id="next-btn" onclick="changePage(1)">Next →</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<!-- ── Order Detail Panel ────────────────────────────────────────────────── -->
+<div class="modal-overlay" id="order-modal" onclick="closeModal(event)">
+  <div class="modal-panel" id="modal-panel">
+    <div class="modal-header">
+      <h2 id="modal-title">Order Detail</h2>
+      <button class="modal-close" onclick="closeOrderModal()">✕</button>
+    </div>
+    <div class="modal-body" id="modal-body">Loading…</div>
+  </div>
+</div>
+
+<!-- ── Toast ─────────────────────────────────────────────────────────────── -->
+<div class="toast" id="toast"></div>
+
+<script>
+// ─── State ─────────────────────────────────────────────────────────────────
+let currentStatus = 'all';
+let currentSearch = '';
+let currentPage   = 1;
+let searchTimer   = null;
+
+// ─── Init ───────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  loadStats();
+  loadOrders();
+  // Auto-refresh every 60 seconds
+  setInterval(() => { loadStats(); loadOrders(); }, 60000);
+});
+
+// ─── Stats ──────────────────────────────────────────────────────────────────
+async function loadStats() {
+  try {
+    const r = await api('/api/stats');
+    document.getElementById('stat-total').textContent     = r.total     || 0;
+    document.getElementById('stat-pending').textContent   = r.pending   || 0;
+    document.getElementById('stat-processing').textContent = r.processing || 0;
+    document.getElementById('stat-shipped').textContent   = r.shipped   || 0;
+    document.getElementById('stat-fulfilled').textContent = r.fulfilled || 0;
+  } catch(e) { console.error(e); }
+}
+
+// ─── Load Orders ─────────────────────────────────────────────────────────────
+async function loadOrders() {
+  const tbody = document.getElementById('orders-tbody');
+  tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:40px;color:#9ca3af">Loading…</td></tr>';
+
+  try {
+    const params = new URLSearchParams({ page: currentPage });
+    if (currentStatus && currentStatus !== 'all') params.set('status', currentStatus);
+    if (currentSearch) params.set('search', currentSearch);
+
+    const r = await api(`/api/orders?${params}`);
+
+    if (!r.orders?.length) {
+      tbody.innerHTML = `<tr><td colspan="7">
+        <div class="empty"><div class="empty-icon">📭</div>
+        <h3>No orders found</h3>
+        <p style="font-size:13px">Orders will appear here when received from Shopify.</p></div>
+      </td></tr>`;
+      document.getElementById('pagination').style.display = 'none';
+      return;
+    }
+
+    tbody.innerHTML = r.orders.map(o => `
+      <tr>
+        <td><span class="order-num">${esc(o.shopify_order_num)}</span></td>
+        <td>
+          <div class="customer-name">${esc(o.customer_name || '—')}</div>
+          <div class="customer-email">${esc(o.customer_email || '')}</div>
+        </td>
+        <td>${formatItems(o.line_items)}</td>
+        <td><strong>${esc(o.currency)} ${esc(o.total_price)}</strong></td>
+        <td>${statusBadge(o.status)}</td>
+        <td style="color:#6b7280;font-size:12px">${formatDate(o.shopify_created_at || o.created_at)}</td>
+        <td><button class="btn btn-secondary btn-sm" onclick="openOrder(${o.id})">View →</button></td>
+      </tr>
+    `).join('');
+
+    // Pagination
+    const pg = document.getElementById('pagination');
+    if (r.pages > 1) {
+      pg.style.display = 'flex';
+      document.getElementById('pagination-info').textContent =
+        `Page ${r.page} of ${r.pages} (${r.total} orders)`;
+      document.getElementById('prev-btn').disabled = r.page <= 1;
+      document.getElementById('next-btn').disabled = r.page >= r.pages;
+    } else {
+      pg.style.display = 'none';
+    }
+  } catch(e) {
+    tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:40px;color:#ef4444">
+      Error loading orders: ${e.message}</td></tr>`;
+  }
+}
+
+// ─── Filters ─────────────────────────────────────────────────────────────────
+function filterByStatus(status) {
+  currentStatus = status;
+  currentPage   = 1;
+  // Update nav active state
+  document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+  loadOrders();
+  loadStats();
+}
+
+function showView(view) {
+  document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+  event.currentTarget.classList.add('active');
+  const titles = { orders: 'All Orders', pending: 'Pending Orders', processing: 'Processing', shipped: 'Shipped', fulfilled: 'Fulfilled' };
+  document.getElementById('page-title').textContent = titles[view] || 'Orders';
+  filterByStatus(view === 'orders' ? 'all' : view);
+}
+
+function handleSearch(val) {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => {
+    currentSearch = val.trim();
+    currentPage   = 1;
+    loadOrders();
+  }, 300);
+}
+
+function changePage(dir) {
+  currentPage = Math.max(1, currentPage + dir);
+  loadOrders();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+// ─── Order Detail Panel ───────────────────────────────────────────────────────
+async function openOrder(id) {
+  const modal = document.getElementById('order-modal');
+  const body  = document.getElementById('modal-body');
+  modal.classList.add('open');
+  body.innerHTML = '<div style="text-align:center;padding:40px;color:#9ca3af">Loading…</div>';
+
+  try {
+    const r = await api(`/api/orders/${id}`);
+    const o = r.order;
+    document.getElementById('modal-title').textContent = `Order ${o.shopify_order_num}`;
+    body.innerHTML = renderOrderDetail(o, r.log || []);
+  } catch(e) {
+    body.innerHTML = `<div style="color:#ef4444;padding:20px">Error: ${e.message}</div>`;
+  }
+}
+
+function renderOrderDetail(o, log) {
+  const addr = o.shipping_address || {};
+  const items = o.line_items || [];
+
+  return `
+    <!-- Status + Actions -->
+    <div class="section">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+        ${statusBadge(o.status)}
+        <span style="font-size:12px;color:#9ca3af">${formatDate(o.shopify_created_at || o.created_at)}</span>
+      </div>
+
+      <div class="action-bar">
+        ${o.status === 'pending' ? `
+          <button class="btn btn-primary btn-sm" onclick="setStatus(${o.id},'processing')">
+            ⚙️ Mark Processing
+          </button>` : ''}
+        ${o.status === 'shipped' && !o.shopify_fulfillment_id ? `
+          <button class="btn btn-success btn-sm" id="fulfill-btn" onclick="fulfillOrder(${o.id})">
+            ✅ Fulfill in Shopify
+          </button>` : ''}
+        ${o.status === 'fulfilled' ? `
+          <span style="color:#059669;font-size:13px;font-weight:500">
+            ✓ Fulfilled in Shopify (ID: ${o.shopify_fulfillment_id || '—'})
+          </span>` : ''}
+      </div>
+    </div>
+
+    <!-- Customer -->
+    <div class="section">
+      <div class="section-title">Customer</div>
+      <div class="field-row"><span class="field-label">Name</span><span class="field-value">${esc(o.customer_name || '—')}</span></div>
+      <div class="field-row"><span class="field-label">Email</span><span class="field-value">${esc(o.customer_email || '—')}</span></div>
+      <div class="field-row"><span class="field-label">Phone</span><span class="field-value">${esc(o.customer_phone || '—')}</span></div>
+    </div>
+
+    <!-- Shipping Address -->
+    <div class="section">
+      <div class="section-title">Shipping Address</div>
+      <div class="field-value" style="line-height:1.8;font-size:13px">
+        ${esc(addr.address1 || '')} ${esc(addr.address2 || '')}<br>
+        ${esc(addr.city || '')}${addr.province ? ', ' + esc(addr.province) : ''} ${esc(addr.zip || '')}<br>
+        ${esc(addr.country || '')}
+      </div>
+    </div>
+
+    <!-- Line Items -->
+    <div class="section">
+      <div class="section-title">Items (${items.length})</div>
+      ${items.map(item => `
+        <div class="line-item">
+          <div>
+            <span class="line-item-title">${esc(item.title)}</span>
+            ${item.variant ? `<span style="color:#6b7280;font-size:12px"> — ${esc(item.variant)}</span>` : ''}
+            ${item.sku ? `<span style="color:#9ca3af;font-size:11px"> [${esc(item.sku)}]</span>` : ''}
+          </div>
+          <div>
+            <span class="line-item-qty">×${item.quantity}</span>
+            <span style="font-weight:600;margin-left:8px">${esc(o.currency)} ${esc(item.price)}</span>
+          </div>
+        </div>
+      `).join('')}
+      <div style="text-align:right;font-weight:700;font-size:14px;margin-top:8px;padding-right:4px">
+        Total: ${esc(o.currency)} ${esc(o.total_price)}
+      </div>
+    </div>
+
+    <!-- Tracking -->
+    <div class="section">
+      <div class="section-title">Tracking Info</div>
+      ${o.tracking_number ? `
+        <div class="field-row"><span class="field-label">Carrier</span><span class="field-value">${esc(o.tracking_carrier)}</span></div>
+        <div class="field-row"><span class="field-label">Number</span><span class="field-value">
+          ${o.tracking_url
+            ? `<a href="${esc(o.tracking_url)}" target="_blank" rel="noopener" style="color:#6366f1">${esc(o.tracking_number)}</a>`
+            : esc(o.tracking_number)
+          }
+        </span></div>
+      ` : '<div style="color:#9ca3af;font-size:13px">No tracking added yet.</div>'}
+    </div>
+
+    <!-- Add / Update Tracking Form -->
+    ${o.status !== 'fulfilled' ? `
+    <div class="tracking-form" id="tracking-form-${o.id}">
+      <h3>${o.tracking_number ? 'Update Tracking' : 'Add Tracking Number'}</h3>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Carrier</label>
+          <select id="carrier-${o.id}">
+            <option value="">Select carrier…</option>
+            <option value="4px" ${o.tracking_carrier==='4px'?'selected':''}>4PX</option>
+            <option value="cainiao" ${o.tracking_carrier==='cainiao'?'selected':''}>Cainiao</option>
+            <option value="china post" ${o.tracking_carrier==='china post'?'selected':''}>China Post</option>
+            <option value="dhl" ${o.tracking_carrier==='dhl'?'selected':''}>DHL</option>
+            <option value="epacket" ${o.tracking_carrier==='epacket'?'selected':''}>ePacket</option>
+            <option value="fedex" ${o.tracking_carrier==='fedex'?'selected':''}>FedEx</option>
+            <option value="sf" ${o.tracking_carrier==='sf'?'selected':''}>SF Express</option>
+            <option value="ups" ${o.tracking_carrier==='ups'?'selected':''}>UPS</option>
+            <option value="usps" ${o.tracking_carrier==='usps'?'selected':''}>USPS</option>
+            <option value="yanwen" ${o.tracking_carrier==='yanwen'?'selected':''}>Yanwen</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Tracking Number</label>
+          <input type="text" id="tracking-num-${o.id}" value="${esc(o.tracking_number || '')}" placeholder="e.g. JT1234567890CN">
+        </div>
+      </div>
+      <div class="form-group" style="margin-bottom:10px">
+        <label>Tracking URL (optional)</label>
+        <input type="text" id="tracking-url-${o.id}" value="${esc(o.tracking_url || '')}" placeholder="https://track.example.com/…">
+      </div>
+      <button class="btn btn-primary btn-sm" onclick="saveTracking(${o.id})">
+        Save Tracking
+      </button>
+    </div>
+    ` : ''}
+
+    <!-- Notes -->
+    <div class="section">
+      <div class="section-title">Internal Notes</div>
+      <textarea class="notes-area" id="notes-${o.id}" placeholder="Add private notes for this order…">${esc(o.notes || '')}</textarea>
+      <button class="btn btn-secondary btn-sm" style="margin-top:6px" onclick="saveNotes(${o.id})">
+        Save Notes
+      </button>
+    </div>
+
+    <!-- Activity Log -->
+    <div class="section activity-log">
+      <div class="section-title">Activity Log</div>
+      ${log.length ? log.map(l => `
+        <div class="log-entry ${l.action}">
+          <div class="log-dot"></div>
+          <div>
+            <div class="log-text">${esc(l.detail)}</div>
+            <span class="log-time">${formatDate(l.created_at)}</span>
+          </div>
+        </div>
+      `).join('') : '<div style="color:#9ca3af;font-size:13px">No activity yet.</div>'}
+    </div>
+  `;
+}
+
+function closeOrderModal() {
+  document.getElementById('order-modal').classList.remove('open');
+}
+
+function closeModal(e) {
+  if (e.target === document.getElementById('order-modal')) closeOrderModal();
+}
+
+// ─── Actions ──────────────────────────────────────────────────────────────────
+async function setStatus(id, status) {
+  try {
+    await api(`/api/orders/${id}/status`, 'PATCH', { status });
+    toast(`Status updated to ${status}`, 'success');
+    openOrder(id);
+    loadStats();
+    loadOrders();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function saveTracking(id) {
+  const tracking_carrier = document.getElementById(`carrier-${id}`)?.value;
+  const tracking_number  = document.getElementById(`tracking-num-${id}`)?.value?.trim();
+  const tracking_url     = document.getElementById(`tracking-url-${id}`)?.value?.trim();
+
+  if (!tracking_number || !tracking_carrier) {
+    toast('Please enter carrier and tracking number', 'error');
+    return;
+  }
+
+  try {
+    await api(`/api/orders/${id}/tracking`, 'PATCH', { tracking_number, tracking_carrier, tracking_url });
+    toast('Tracking saved — status set to Shipped', 'success');
+    openOrder(id);
+    loadStats();
+    loadOrders();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function fulfillOrder(id) {
+  const btn = document.getElementById('fulfill-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Fulfilling…'; }
+
+  try {
+    const r = await api(`/api/orders/${id}/fulfill`, 'POST');
+    toast('✅ Order fulfilled in Shopify! Customer notified.', 'success');
+    openOrder(id);
+    loadStats();
+    loadOrders();
+  } catch(e) {
+    if (btn) { btn.disabled = false; btn.textContent = '✅ Fulfill in Shopify'; }
+    toast(`Fulfillment failed: ${e.message}`, 'error');
+  }
+}
+
+async function saveNotes(id) {
+  const notes = document.getElementById(`notes-${id}`)?.value;
+  try {
+    await api(`/api/orders/${id}/notes`, 'PATCH', { notes });
+    toast('Notes saved', 'success');
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+async function api(url, method = 'GET', body) {
+  const opts = {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+  };
+  if (body) opts.body = JSON.stringify(body);
+  const r = await fetch(url, opts);
+  const json = await r.json();
+  if (!r.ok) throw new Error(json.error || `HTTP ${r.status}`);
+  return json;
+}
+
+function statusBadge(status) {
+  return `<span class="badge badge-${status}">${status}</span>`;
+}
+
+function formatItems(items) {
+  if (!items?.length) return '—';
+  const total = items.reduce((s, i) => s + (i.quantity || 1), 0);
+  const first = items[0]?.title || 'Item';
+  return items.length === 1
+    ? `${esc(first)} ×${items[0].quantity}`
+    : `${esc(first)}… (+${items.length - 1} more)`;
+}
+
+function formatDate(str) {
+  if (!str) return '—';
+  try {
+    return new Date(str).toLocaleDateString('en-US', {
+      month: 'short', day: 'numeric', year: 'numeric',
+      hour: '2-digit', minute: '2-digit',
+    });
+  } catch { return str; }
+}
+
+function esc(str) {
+  if (str === null || str === undefined) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+let toastTimer;
+function toast(msg, type = '') {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = `toast show ${type}`;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 3500);
+}
+</script>
+</body>
+</html>
