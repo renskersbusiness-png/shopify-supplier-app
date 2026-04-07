@@ -23,9 +23,10 @@ function verifyShopifyWebhook(req, res, next) {
     return res.status(401).json({ error: 'Missing HMAC header' });
   }
 
-  const secret = process.env.SHOPIFY_WEBHOOK_SECRET;
+  // For Dev Dashboard (Partner) apps the HMAC is signed with the client secret.
+  const secret = process.env.SHOPIFY_CLIENT_SECRET;
   if (!secret) {
-    console.error('[Webhook] SHOPIFY_WEBHOOK_SECRET is not set!');
+    console.error('[Webhook] SHOPIFY_CLIENT_SECRET is not set!');
     return res.status(500).json({ error: 'Webhook secret not configured' });
   }
 

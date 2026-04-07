@@ -2,28 +2,46 @@
  * shopify/client.js
  * All Shopify API communication.
  * Uses the Admin GraphQL API to create fulfillments and update tracking.
+ *
+ * Access tokens are obtained programmatically via the client credentials
+ * grant (see shopify/auth.js) — no hardcoded SHOPIFY_ACCESS_TOKEN needed.
  */
 
-const fetch = require('node-fetch');
+const fetch  = require('node-fetch');
+const { getAccessToken, clearTokenCache } = require('./auth');
 
-const SHOPIFY_DOMAIN      = process.env.SHOPIFY_SHOP_DOMAIN;
-const SHOPIFY_TOKEN       = process.env.SHOPIFY_ACCESS_TOKEN;
-const API_VERSION         = '2024-01'; // Bump this annually
+const SHOPIFY_DOMAIN = process.env.SHOPIFY_SHOP_DOMAIN;
+const API_VERSION    = '2024-01'; // Bump this annually
 
 const GRAPHQL_URL = `https://${SHOPIFY_DOMAIN}/admin/api/${API_VERSION}/graphql.json`;
 
 /**
  * Execute a GraphQL query/mutation against the Shopify Admin API.
+ * Automatically fetches (and caches) the access token.
+ * On a 401 the token cache is cleared and the request is retried once.
  */
 async function shopifyGraphQL(query, variables = {}) {
+  return _request(query, variables, false);
+}
+
+async function _request(query, variables, isRetry) {
+  const token = await getAccessToken();
+
   const res = await fetch(GRAPHQL_URL, {
     method: 'POST',
     headers: {
-      'Content-Type':             'application/json',
-      'X-Shopify-Access-Token':   SHOPIFY_TOKEN,
+      'Content-Type':           'application/json',
+      'X-Shopify-Access-Token': token,
     },
     body: JSON.stringify({ query, variables }),
   });
+
+  // If Shopify rejects the token, clear the cache and try one more time.
+  if (res.status === 401 && !isRetry) {
+    console.warn('[Shopify] 401 received — clearing token cache and retrying once.');
+    clearTokenCache();
+    return _request(query, variables, true);
+  }
 
   if (!res.ok) {
     const text = await res.text();
