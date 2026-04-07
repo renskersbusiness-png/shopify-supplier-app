@@ -110,7 +110,17 @@ router.post('/login', (req, res) => {
     req.session.authenticated = true;
     const returnTo = req.session.returnTo || '/';
     delete req.session.returnTo;
-    return res.redirect(returnTo);
+    // Save session to store before redirecting. Without this, the redirect
+    // fires before the async write completes and the next request sees an
+    // empty session → 401 on every API call immediately after login.
+    req.session.save((err) => {
+      if (err) {
+        console.error('[Login] Session save failed:', err);
+        return res.status(500).send('Login failed — please try again.');
+      }
+      res.redirect(returnTo);
+    });
+    return;
   }
 
   res.redirect('/login?error=1');
