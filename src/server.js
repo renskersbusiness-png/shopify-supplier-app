@@ -12,6 +12,12 @@ const path           = require('path');
 
 const app = express();
 
+// ── Trust proxy ───────────────────────────────────────────────────────────────
+// Required on Railway (and any reverse-proxy host) so Express sees the real
+// HTTPS protocol from X-Forwarded-Proto. Without this, secure:true cookies are
+// silently dropped because Express thinks the connection is plain HTTP.
+app.set('trust proxy', 1);
+
 // ── Security headers ──────────────────────────────────────────────────────────
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -58,6 +64,7 @@ app.use(session({
   cookie: {
     httpOnly: true,
     secure:   process.env.NODE_ENV === 'production', // HTTPS only in production
+    sameSite: 'lax',
     maxAge:   24 * 60 * 60 * 1000, // 24 hours
   },
 }));

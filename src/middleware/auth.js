@@ -12,7 +12,13 @@ function requireAuth(req, res, next) {
     return next();
   }
 
-  // Store the originally requested URL so we can redirect after login
+  // API routes must return JSON — never redirect to an HTML login page,
+  // because the frontend fetch() would receive HTML and throw "Unexpected token '<'"
+  if (req.originalUrl.startsWith('/api')) {
+    return res.status(401).json({ error: 'Not authenticated' });
+  }
+
+  // Dashboard HTML routes: store the destination and redirect to login
   req.session.returnTo = req.originalUrl;
   res.redirect('/login');
 }
