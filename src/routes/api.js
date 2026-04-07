@@ -30,7 +30,12 @@ router.get('/orders', (req, res) => {
     const limit  = 25;
     const offset = (parseInt(page) - 1) * limit;
 
-    const { orders, total } = db.getAllOrders({ status, search, limit, offset });
+    // Hide unpaid (pending) orders from the supplier view by default.
+    // Only exclude when no specific status filter is active so the supplier
+    // can still explicitly filter by status if needed.
+    const excludePending = !status || status === 'all';
+
+    const { orders, total } = db.getAllOrders({ status, search, limit, offset, excludePending });
 
     // Parse JSON fields before sending to client
     const parsed = orders.map(parseOrderFields);
@@ -66,7 +71,7 @@ router.get('/orders/:id', (req, res) => {
 
 router.get('/stats', (req, res) => {
   try {
-    res.json(db.getStats());
+    res.json(db.getStats({ excludePending: true }));
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch stats' });
   }

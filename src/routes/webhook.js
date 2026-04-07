@@ -145,7 +145,18 @@ async function processNewOrder(payload) {
 router.post('/orders/paid', verifyShopifyWebhook, (req, res) => {
   res.status(200).json({ received: true });
 
-  const shopifyOrderId = String(req.body.id);
+  const shopifyOrderId  = String(req.body.id);
+  const financialStatus = req.body.financial_status;
+
+  // Verify the payload itself confirms payment — the webhook name alone is not
+  // a guarantee (e.g. partial payments, refunds, or test payloads can fire it).
+  if (financialStatus !== 'paid') {
+    console.log(
+      `[Webhook] orders/paid: order ${shopifyOrderId} financial_status="${financialStatus}" — not confirmed paid, skipping`
+    );
+    return;
+  }
+
   const order = getOrderByShopifyId(shopifyOrderId);
 
   if (!order) {
@@ -160,8 +171,8 @@ router.post('/orders/paid', verifyShopifyWebhook, (req, res) => {
   }
 
   updateOrderStatus(order.id, 'processing');
-  logActivity(order.id, 'status_change', 'Status set to "processing" (payment captured)');
-  console.log(`[Webhook] orders/paid: ${order.shopify_order_num} → processing`);
+  logActivity(order.id, 'status_change', 'Status set to "processing" (payment confirmed by Shopify)');
+  console.log(`[Webhook] orders/paid: ${order.shopify_order_num} → processing ✓`);
 });
 
 // ── fulfillments/create ───────────────────────────────────────────────────────
@@ -178,6 +189,15 @@ router.post('/fulfillments/create', verifyShopifyWebhook, (req, res) => {
 
   if (!order) {
     console.log(`[Webhook] fulfillments/create: order ${shopifyOrderId} not found in DB — skipping`);
+    return;
+  }
+
+  // Block if the order has not been confirmed as paid yet.
+  // pending = awaiting payment; only process confirmed-paid orders.
+  if (order.status === 'pending') {
+    console.log(
+      `[Webhook] fulfillments/create: order ${order.shopify_order_num} is still pending (unpaid) — skipping`
+    );
     return;
   }
 

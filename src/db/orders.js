@@ -30,7 +30,7 @@ function createOrder(data) {
 
 // ── Read ──────────────────────────────────────────────────────────────────────
 
-function getAllOrders({ status, search, limit = 50, offset = 0 } = {}) {
+function getAllOrders({ status, search, limit = 50, offset = 0, excludePending = false } = {}) {
   const db = getDb();
 
   let where = [];
@@ -39,6 +39,9 @@ function getAllOrders({ status, search, limit = 50, offset = 0 } = {}) {
   if (status && status !== 'all') {
     where.push('status = @status');
     params.status = status;
+  } else if (excludePending) {
+    // Supplier view: hide orders that have not yet been confirmed as paid
+    where.push("status != 'pending'");
   }
 
   if (search) {
@@ -113,8 +116,11 @@ function updateNotes(id, notes) {
 
 // ── Stats (for dashboard header) ─────────────────────────────────────────────
 
-function getStats() {
+function getStats({ excludePending = false } = {}) {
   const db = getDb();
+  // When excludePending is true: total and all buckets count only confirmed-paid
+  // orders. The pending row returns 0 because it is excluded by the WHERE clause.
+  const where = excludePending ? "WHERE status != 'pending'" : '';
   return db.prepare(`
     SELECT
       COUNT(*) as total,
@@ -123,6 +129,7 @@ function getStats() {
       SUM(CASE WHEN status = 'shipped'    THEN 1 ELSE 0 END) as shipped,
       SUM(CASE WHEN status = 'fulfilled'  THEN 1 ELSE 0 END) as fulfilled
     FROM orders
+    ${where}
   `).get();
 }
 
