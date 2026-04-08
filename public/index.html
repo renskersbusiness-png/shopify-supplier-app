@@ -700,6 +700,11 @@ function renderOrderDetail(o, log, fulfillableItems = null) {
           <span style="color:#059669;font-size:13px;font-weight:500">
             ✓ Fulfilled in Shopify (ID: ${o.shopify_fulfillment_id || '—'})
           </span>` : ''}
+
+        ${userRole === 'admin' ? `
+          <button class="btn btn-secondary btn-sm" onclick="syncOrder(${o.id})" title="Re-fetch this order's payment status from Shopify and fix any stale DB state">
+            ↻ Sync from Shopify
+          </button>` : ''}
       </div>
     </div>
 
@@ -883,6 +888,20 @@ async function fulfillOrder(id) {
     if (btn) { btn.disabled = false; btn.textContent = '✅ Fulfill in Shopify'; }
     toast(`Fulfillment failed: ${e.message}`, 'error');
   }
+}
+
+async function syncOrder(id) {
+  try {
+    const r = await api(`/api/orders/${id}/sync`, 'POST');
+    if (r.changes.length) {
+      toast(`Synced: ${r.changes.join(', ')}`, 'success');
+    } else {
+      toast('Already up to date', '');
+    }
+    openOrder(id);
+    loadStats();
+    loadOrders();
+  } catch(e) { toast(`Sync failed: ${e.message}`, 'error'); }
 }
 
 async function saveNotes(id) {

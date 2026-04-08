@@ -247,7 +247,7 @@ async function syncRecentOrders() {
   const domain = process.env.SHOPIFY_SHOP_DOMAIN;
 
   const res = await fetch(
-    `https://${domain}/admin/api/2026-04/orders.json?limit=5&status=any`,
+    `https://${domain}/admin/api/2026-04/orders.json?limit=50&status=any`,
     { headers: { 'X-Shopify-Access-Token': token } }
   );
 
@@ -333,10 +333,36 @@ async function syncRecentOrders() {
   console.log(`[Sync] Inserted ${inserted} new orders, refreshed ${refreshed} existing`);
 }
 
+/**
+ * Fetch a single order's current state from Shopify REST API.
+ * Returns the raw Shopify order object, or null if not found.
+ * Used by the admin "Sync from Shopify" endpoint to correct stale DB state.
+ */
+async function fetchOrderFromShopify(shopifyOrderId) {
+  const token  = await getAccessToken();
+  const domain = process.env.SHOPIFY_SHOP_DOMAIN;
+
+  const res = await fetch(
+    `https://${domain}/admin/api/2026-04/orders/${shopifyOrderId}.json`,
+    { headers: { 'X-Shopify-Access-Token': token } }
+  );
+
+  if (res.status === 404) return null;
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Shopify order fetch failed (${res.status}): ${text}`);
+  }
+
+  const { order } = await res.json();
+  return order;
+}
+
 module.exports = {
   shopifyGraphQL,
   getFulfillmentOrders,
   getFulfillableItems,
   createFulfillment,
   syncRecentOrders,
+  fetchOrderFromShopify,
 };

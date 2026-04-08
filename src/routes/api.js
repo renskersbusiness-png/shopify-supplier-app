@@ -9,7 +9,7 @@ const router  = express.Router();
 
 const { requireAuth } = require('../middleware/auth');
 const db = require('../db/orders');
-const { createFulfillment, getFulfillableItems } = require('../shopify/client');
+const { createFulfillment, getFulfillableItems, fetchOrderFromShopify } = require('../shopify/client');
 
 // All API routes require login
 router.use(requireAuth);
@@ -55,6 +55,56 @@ router.get('/orders', (req, res) => {
   } catch (err) {
     console.error('[API] GET /orders error:', err);
     res.status(500).json({ error: 'Failed to fetch orders' });
+  }
+});
+
+// ── POST /api/orders/:id/sync — force-refresh a single order from Shopify ────
+// Admin-only. Fetches the current state of the order from the Shopify REST API
+// and overwrites financial_status and workflow status in the DB.
+// Use this to fix any order that is stuck due to a missed webhook.
+
+router.post('/orders/:id/sync', async (req, res) => {
+  if (req.session.role !== 'admin') {
+    return res.status(403).json({ error: 'Admin only' });
+  }
+
+  try {
+    const order = db.getOrderById(req.params.id);
+    if (!order) return res.status(404).json({ error: 'Order not found' });
+
+    const shopifyOrder = await fetchOrderFromShopify(order.shopify_order_id);
+    if (!shopifyOrder) {
+      return res.status(404).json({ error: 'Order not found in Shopify' });
+    }
+
+    const shopifyFinancial = shopifyOrder.financial_status || 'pending';
+    const changes = [];
+
+    // Always overwrite financial_status with Shopify's current value
+    if (order.financial_status !== shopifyFinancial) {
+      db.updateFinancialStatus(order.id, shopifyFinancial);
+      changes.push(`financial_status: ${order.financial_status} → ${shopifyFinancial}`);
+    }
+
+    // Advance workflow status if stuck at pending but Shopify confirms payment
+    if (order.status === 'pending' &&
+        (shopifyFinancial === 'paid' || shopifyFinancial === 'partially_paid' || shopifyFinancial === 'authorized')) {
+      db.updateOrderStatus(order.id, 'processing');
+      db.logActivity(order.id, 'status_change',
+        `Status set to "processing" via manual sync (Shopify financial_status: ${shopifyFinancial})`);
+      changes.push(`status: pending → processing`);
+    }
+
+    console.log(`[Sync] Manual sync for ${order.shopify_order_num}: ${changes.length ? changes.join(', ') : 'no changes'}`);
+
+    res.json({
+      success: true,
+      shopify_financial_status: shopifyFinancial,
+      changes,
+    });
+  } catch (err) {
+    console.error('[API] POST sync error:', err);
+    res.status(500).json({ error: err.message || 'Sync failed' });
   }
 });
 
