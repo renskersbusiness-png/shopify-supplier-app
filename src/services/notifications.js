@@ -9,16 +9,42 @@ const { getSupplierById }        = require('../db/suppliers');
 const { getUnnotifiedAssignments, markNotified } = require('../db/assignments');
 
 // ── Transport ─────────────────────────────────────────────────────────────────
+//
+// Gmail SMTP reference:
+//   host:   smtp.gmail.com
+//   port:   465  → secure: true   (SSL, connection is encrypted from the start)
+//   port:   587  → secure: false  (STARTTLS, upgrades after connecting)
+//   ⚠ NEVER use port 465 with secure:false or port 587 with secure:true —
+//     both cause a silent TCP hang because the client and server disagree on
+//     when to start TLS negotiation.
+//
+// Timeouts: without explicit timeouts nodemailer will hang forever if the
+// server is unreachable or the port/secure combination is wrong.
+//   connectionTimeout  — time to establish the TCP socket (default: none)
+//   greetingTimeout    — time to receive the SMTP EHLO/HELO banner (default: none)
+//   socketTimeout      — idle time on an already-connected socket (default: none)
+
+const SEND_TIMEOUT_MS = 15_000; // hard deadline for the full sendMail() call
 
 function createTransport() {
+  const port   = Number(process.env.SMTP_PORT) || 587;
+  const secure = process.env.SMTP_SECURE === 'true'; // must match port: true↔465, false↔587
+
+  console.log(`[email] transport config: host=${process.env.SMTP_HOST} port=${port} secure=${secure} user=${process.env.SMTP_USER}`);
+
   return nodemailer.createTransport({
     host:   process.env.SMTP_HOST,
-    port:   Number(process.env.SMTP_PORT) || 587,
-    secure: process.env.SMTP_SECURE === 'true',
+    port,
+    secure,
     auth: {
       user: process.env.SMTP_USER,
       pass: process.env.SMTP_PASS,
     },
+    // Explicit timeouts so a wrong port or unreachable host always produces
+    // a logged error rather than a silent hang.
+    connectionTimeout: 10_000, // 10s to open TCP socket
+    greetingTimeout:   10_000, // 10s to receive SMTP greeting after connect
+    socketTimeout:     15_000, // 15s max idle on an open socket
   });
 }
 
@@ -131,20 +157,29 @@ async function notifySupplier(supplierId) {
   const appUrl = process.env.APP_URL || 'http://localhost:3000';
   const { html, text } = buildAssignmentEmail(supplier, assignments, appUrl);
 
-  try {
-    const transport = createTransport();
-    await transport.sendMail({
-      from:    process.env.SMTP_FROM || process.env.SMTP_USER,
-      to:      supplier.email,
-      subject: `[Fulfillment] ${assignments.length} new item(s) assigned to you`,
-      text,
-      html,
-    });
+  const transport = createTransport();
+  const mailOptions = {
+    from:    process.env.SMTP_FROM || process.env.SMTP_USER,
+    to:      supplier.email,
+    subject: `[Fulfillment] ${assignments.length} new item(s) assigned to you`,
+    text,
+    html,
+  };
 
+  console.log(`[email] calling sendMail (timeout=${SEND_TIMEOUT_MS}ms) from=${mailOptions.from} to=${mailOptions.to}`);
+
+  // Race sendMail against a hard timeout so a wrong port or firewall block
+  // always produces a logged failure instead of hanging the process.
+  const timeoutPromise = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error(`sendMail timed out after ${SEND_TIMEOUT_MS}ms — check SMTP host/port/secure settings`)), SEND_TIMEOUT_MS)
+  );
+
+  try {
+    const info = await Promise.race([transport.sendMail(mailOptions), timeoutPromise]);
     markNotified(assignments.map(a => a.id));
-    console.log(`[email] sent successfully to ${supplier.email} (${assignments.length} item(s), supplier "${supplier.name}")`);
+    console.log(`[email] sent successfully to ${supplier.email} (${assignments.length} item(s), supplier "${supplier.name}", messageId=${info.messageId})`);
   } catch (err) {
-    console.error(`[email] failed → SMTP error for supplier "${supplier.name}" (${supplier.email}): ${err.message}`);
+    console.error(`[email] failed → ${err.message}`);
     console.error(`[email] full error:`, err);
   }
 }

@@ -43,6 +43,64 @@ function safeJSON(str) {
   try { return JSON.parse(str || 'null'); } catch { return null; }
 }
 
+// ── POST /api/test-email ──────────────────────────────────────────────────────
+// One-shot SMTP smoke test. Sends a plain email using the exact same transporter
+// config as notifySupplier(). Does not touch the DB or assignments.
+// Body (optional): { "to": "someone@example.com" }
+
+router.post('/test-email', adminOnly, async (req, res) => {
+  const nodemailer = require('nodemailer');
+
+  const to = (req.body && req.body.to) || process.env.SMTP_USER || 'wout.renskers@gmail.com';
+
+  if (!process.env.SMTP_HOST) {
+    console.log('[email-test] skipped → SMTP_HOST not set');
+    return res.status(500).json({ success: false, error: 'SMTP_HOST is not configured' });
+  }
+
+  const port   = Number(process.env.SMTP_PORT) || 587;
+  const secure = process.env.SMTP_SECURE === 'true';
+
+  console.log(`[email-test] sending to=${to} host=${process.env.SMTP_HOST} port=${port} secure=${secure} user=${process.env.SMTP_USER}`);
+
+  const transport = nodemailer.createTransport({
+    host:   process.env.SMTP_HOST,
+    port,
+    secure,
+    auth: {
+      user: process.env.SMTP_USER,
+      pass: process.env.SMTP_PASS,
+    },
+    connectionTimeout: 10_000,
+    greetingTimeout:   10_000,
+    socketTimeout:     15_000,
+  });
+
+  const TIMEOUT_MS = 15_000;
+  const timeoutPromise = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error(`sendMail timed out after ${TIMEOUT_MS}ms — check SMTP host/port/secure settings`)), TIMEOUT_MS)
+  );
+
+  try {
+    const info = await Promise.race([
+      transport.sendMail({
+        from:    process.env.SMTP_FROM || process.env.SMTP_USER,
+        to,
+        subject: 'Test email from Shopify Supplier App',
+        text:    'If you receive this, SMTP works.',
+        html:    '<p>If you receive this, <strong>SMTP works</strong>.</p>',
+      }),
+      timeoutPromise,
+    ]);
+
+    console.log(`[email-test] sent successfully to ${to} (messageId=${info.messageId})`);
+    return res.json({ success: true, to, messageId: info.messageId });
+  } catch (err) {
+    console.error(`[email-test] failed → ${err.message}`);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // ── GET /api/me ───────────────────────────────────────────────────────────────
 
 router.get('/me', (req, res) => {
