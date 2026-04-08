@@ -1,53 +1,70 @@
 /**
  * routes/api.js
- * REST API endpoints consumed by the dashboard frontend.
- * All routes require authentication.
+ * Admin REST API — orders, suppliers, assignment rules, and assignments.
+ * All routes require authentication. Admin-only routes are gated with role check.
  */
 
 const express = require('express');
 const router  = express.Router();
 
 const { requireAuth } = require('../middleware/auth');
-const db = require('../db/orders');
-const { createFulfillment, getFulfillableItems, fetchOrderFromShopify } = require('../shopify/client');
+const db      = require('../db/orders');
+const suppDb  = require('../db/suppliers');
+const asgDb   = require('../db/assignments');
+const { reassignLineItem }             = require('../services/assignment');
+const { notifySupplier }               = require('../services/notifications');
+const { createFulfillmentForLineItems, fetchOrderFromShopify } = require('../shopify/client');
 
-// All API routes require login
+// ── Global middleware ─────────────────────────────────────────────────────────
+
 router.use(requireAuth);
-
-// Prevent browsers from caching API responses.
-// Without this, a browser may serve a stale 401 from cache immediately after
-// login, making it appear as though auth is not working.
 router.use((req, res, next) => {
   res.setHeader('Cache-Control', 'no-store');
   next();
 });
 
-// ── GET /api/me — current session role ───────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function adminOnly(req, res, next) {
+  if (req.session.role === 'admin') return next();
+  return res.status(403).json({ error: 'Admin only' });
+}
+
+function parseOrderFields(order) {
+  return {
+    ...order,
+    shipping_address: safeJSON(order.shipping_address),
+    line_items:       safeJSON(order.line_items),
+    raw_payload:      undefined,
+  };
+}
+
+function safeJSON(str) {
+  try { return JSON.parse(str || 'null'); } catch { return null; }
+}
+
+// ── GET /api/me ───────────────────────────────────────────────────────────────
 
 router.get('/me', (req, res) => {
-  res.json({ role: req.session.role || 'supplier' });
+  res.json({
+    role:         req.session.role || null,
+    supplierId:   req.session.supplierId   || null,
+    supplierName: req.session.supplierName || null,
+  });
 });
 
-// ── GET /api/orders — list orders with optional filters ───────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+// ORDERS
+// ══════════════════════════════════════════════════════════════════════════════
 
 router.get('/orders', (req, res) => {
   try {
     const { status, search, page = 1 } = req.query;
     const limit  = 25;
     const offset = (parseInt(page) - 1) * limit;
-    const isAdmin = req.session.role === 'admin';
-
-    // Suppliers only see orders with payment on file (authorized, partially_paid,
-    // paid, partially_refunded). Admins see everything.
-    const supplierOnly = !isAdmin;
-
-    const { orders, total } = db.getAllOrders({ status, search, limit, offset, supplierOnly });
-
-    // Parse JSON fields before sending to client
-    const parsed = orders.map(parseOrderFields);
-
+    const { orders, total } = db.getAllOrders({ status, search, limit, offset, supplierOnly: false });
     res.json({
-      orders: parsed,
+      orders: orders.map(parseOrderFields),
       total,
       page:  parseInt(page),
       pages: Math.ceil(total / limit),
@@ -58,131 +75,76 @@ router.get('/orders', (req, res) => {
   }
 });
 
-// ── POST /api/orders/:id/sync — force-refresh a single order from Shopify ────
-// Admin-only. Fetches the current state of the order from the Shopify REST API
-// and overwrites financial_status and workflow status in the DB.
-// Use this to fix any order that is stuck due to a missed webhook.
-
-router.post('/orders/:id/sync', async (req, res) => {
-  if (req.session.role !== 'admin') {
-    return res.status(403).json({ error: 'Admin only' });
-  }
-
-  try {
-    const order = db.getOrderById(req.params.id);
-    if (!order) return res.status(404).json({ error: 'Order not found' });
-
-    const shopifyOrder = await fetchOrderFromShopify(order.shopify_order_id);
-    if (!shopifyOrder) {
-      return res.status(404).json({ error: 'Order not found in Shopify' });
-    }
-
-    const shopifyFinancial = shopifyOrder.financial_status || 'pending';
-    const changes = [];
-
-    // Always overwrite financial_status with Shopify's current value
-    if (order.financial_status !== shopifyFinancial) {
-      db.updateFinancialStatus(order.id, shopifyFinancial);
-      changes.push(`financial_status: ${order.financial_status} → ${shopifyFinancial}`);
-    }
-
-    // Advance workflow status if stuck at pending but Shopify confirms payment
-    if (order.status === 'pending' &&
-        (shopifyFinancial === 'paid' || shopifyFinancial === 'partially_paid' || shopifyFinancial === 'authorized')) {
-      db.updateOrderStatus(order.id, 'processing');
-      db.logActivity(order.id, 'status_change',
-        `Status set to "processing" via manual sync (Shopify financial_status: ${shopifyFinancial})`);
-      changes.push(`status: pending → processing`);
-    }
-
-    console.log(`[Sync] Manual sync for ${order.shopify_order_num}: ${changes.length ? changes.join(', ') : 'no changes'}`);
-
-    res.json({
-      success: true,
-      shopify_financial_status: shopifyFinancial,
-      changes,
-    });
-  } catch (err) {
-    console.error('[API] POST sync error:', err);
-    res.status(500).json({ error: err.message || 'Sync failed' });
-  }
-});
-
-// ── GET /api/orders/:id/fulfillable — OPEN fulfillment order items only ───────
-// Returns the line items from Shopify fulfillment orders with status=OPEN.
-// Used by the supplier portal for partially_paid orders so the supplier only
-// sees items that are actually ready/allowed to ship — not unpaid upsell items.
-
-router.get('/orders/:id/fulfillable', async (req, res) => {
-  try {
-    const order = db.getOrderById(req.params.id);
-    if (!order) return res.status(404).json({ error: 'Order not found' });
-
-    // Suppliers cannot inspect unpaid orders at all
-    if (req.session.role !== 'admin' && order.financial_status === 'pending') {
-      return res.status(403).json({ error: 'Order not yet confirmed as paid' });
-    }
-
-    const items = await getFulfillableItems(order.shopify_order_id);
-    res.json({ items });
-  } catch (err) {
-    console.error('[API] GET /orders/:id/fulfillable error:', err);
-    res.status(500).json({ error: err.message || 'Failed to fetch fulfillable items' });
-  }
-});
-
-// ── GET /api/orders/:id — single order detail ─────────────────────────────────
-
 router.get('/orders/:id', (req, res) => {
   try {
     const order = db.getOrderById(req.params.id);
     if (!order) return res.status(404).json({ error: 'Order not found' });
-
-    const log = db.getActivityLog(order.id);
-    res.json({ order: parseOrderFields(order), log });
+    const log         = db.getActivityLog(order.id);
+    const assignments = asgDb.getAssignmentsByOrder(order.id);
+    res.json({ order: parseOrderFields(order), log, assignments });
   } catch (err) {
     console.error('[API] GET /orders/:id error:', err);
     res.status(500).json({ error: 'Failed to fetch order' });
   }
 });
 
-// ── GET /api/stats — dashboard summary stats ──────────────────────────────────
-
-router.get('/stats', (req, res) => {
+// Force-refresh a single order from Shopify
+router.post('/orders/:id/sync', adminOnly, async (req, res) => {
   try {
-    const isAdmin = req.session.role === 'admin';
-    res.json(db.getStats({ supplierOnly: !isAdmin }));
+    const order = db.getOrderById(req.params.id);
+    if (!order) return res.status(404).json({ error: 'Order not found' });
+
+    const shopifyOrder = await fetchOrderFromShopify(order.shopify_order_id);
+    if (!shopifyOrder) return res.status(404).json({ error: 'Order not found in Shopify' });
+
+    const shopifyFinancial = shopifyOrder.financial_status || 'pending';
+    const changes = [];
+
+    if (order.financial_status !== shopifyFinancial) {
+      db.updateFinancialStatus(order.id, shopifyFinancial);
+      changes.push(`financial_status: ${order.financial_status} → ${shopifyFinancial}`);
+    }
+
+    if (order.status === 'pending' &&
+        (shopifyFinancial === 'paid' || shopifyFinancial === 'partially_paid' || shopifyFinancial === 'authorized')) {
+      db.updateOrderStatus(order.id, 'processing');
+      db.logActivity(order.id, 'status_change',
+        `Status set to "processing" via manual sync (Shopify financial_status: ${shopifyFinancial})`);
+      changes.push('status: pending → processing');
+    }
+
+    res.json({ success: true, shopify_financial_status: shopifyFinancial, changes });
+  } catch (err) {
+    console.error('[API] POST /orders/:id/sync error:', err);
+    res.status(500).json({ error: err.message || 'Sync failed' });
+  }
+});
+
+router.get('/stats', adminOnly, (req, res) => {
+  try {
+    res.json({
+      orders:      db.getStats({ supplierOnly: false }),
+      assignments: asgDb.getAllAssignmentStats(),
+    });
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch stats' });
   }
 });
 
-// ── PATCH /api/orders/:id/status — update order status ───────────────────────
-
-router.patch('/orders/:id/status', (req, res) => {
+router.patch('/orders/:id/status', adminOnly, (req, res) => {
   try {
     const { status } = req.body;
-    const validStatuses = ['pending', 'processing', 'shipped', 'fulfilled'];
-
-    if (!validStatuses.includes(status)) {
-      return res.status(400).json({ error: `Invalid status. Must be: ${validStatuses.join(', ')}` });
+    const valid = ['pending', 'processing', 'shipped', 'fulfilled'];
+    if (!valid.includes(status)) {
+      return res.status(400).json({ error: `Invalid status. Must be: ${valid.join(', ')}` });
     }
-
     const order = db.getOrderById(req.params.id);
     if (!order) return res.status(404).json({ error: 'Order not found' });
-
     if (order.status === 'fulfilled') {
-      return res.status(400).json({ error: 'Cannot change the status of a fulfilled order' });
+      return res.status(400).json({ error: 'Cannot change status of a fulfilled order' });
     }
-
-    // Suppliers cannot act on orders with no payment on file
-    if (req.session.role !== 'admin' && order.financial_status === 'pending') {
-      return res.status(403).json({ error: 'Order not yet confirmed as paid' });
-    }
-
     db.updateOrderStatus(order.id, status);
     db.logActivity(order.id, 'status_change', `Status changed to "${status}"`);
-
     res.json({ success: true, status });
   } catch (err) {
     console.error('[API] PATCH status error:', err);
@@ -190,126 +152,253 @@ router.patch('/orders/:id/status', (req, res) => {
   }
 });
 
-// ── PATCH /api/orders/:id/tracking — add tracking info ───────────────────────
-
-router.patch('/orders/:id/tracking', (req, res) => {
-  try {
-    const { tracking_number, tracking_carrier, tracking_url } = req.body;
-
-    if (!tracking_number || !tracking_carrier) {
-      return res.status(400).json({ error: 'tracking_number and tracking_carrier are required' });
-    }
-
-    const order = db.getOrderById(req.params.id);
-    if (!order) return res.status(404).json({ error: 'Order not found' });
-
-    // Suppliers cannot add tracking to unpaid orders
-    if (req.session.role !== 'admin' && order.financial_status === 'pending') {
-      return res.status(403).json({ error: 'Order not yet confirmed as paid' });
-    }
-
-    db.updateTracking(order.id, { tracking_number, tracking_carrier, tracking_url });
-    db.logActivity(
-      order.id,
-      'tracking_added',
-      `Tracking added: ${tracking_carrier} — ${tracking_number}`
-    );
-
-    res.json({ success: true });
-  } catch (err) {
-    console.error('[API] PATCH tracking error:', err);
-    res.status(500).json({ error: 'Failed to update tracking' });
-  }
-});
-
-// ── POST /api/orders/:id/fulfill — push fulfillment to Shopify ───────────────
-
-router.post('/orders/:id/fulfill', async (req, res) => {
+router.patch('/orders/:id/notes', adminOnly, (req, res) => {
   try {
     const order = db.getOrderById(req.params.id);
     if (!order) return res.status(404).json({ error: 'Order not found' });
-
-    if (!order.tracking_number || !order.tracking_carrier) {
-      return res.status(400).json({
-        error: 'Please add tracking number and carrier before fulfilling'
-      });
-    }
-
-    if (order.status === 'fulfilled') {
-      return res.status(400).json({ error: 'Order is already fulfilled' });
-    }
-
-    // Suppliers cannot fulfill orders with no payment on file
-    if (req.session.role !== 'admin' && order.financial_status === 'pending') {
-      return res.status(403).json({ error: 'Order not yet confirmed as paid' });
-    }
-
-    console.log(`[Fulfill] Creating fulfillment for order ${order.shopify_order_num}...`);
-
-    // Call Shopify API to create fulfillment + send tracking email to customer
-    const fulfillment = await createFulfillment({
-      shopifyOrderId:  order.shopify_order_id,
-      trackingNumber:  order.tracking_number,
-      trackingCarrier: order.tracking_carrier,
-      trackingUrl:     order.tracking_url,
-    });
-
-    // Extract Shopify fulfillment ID from global ID (gid://shopify/Fulfillment/123)
-    const fulfillmentId = fulfillment.id.split('/').pop();
-
-    db.markFulfilled(order.id, fulfillmentId);
-    db.logActivity(
-      order.id,
-      'fulfilled',
-      `Fulfilled in Shopify (fulfillment ID: ${fulfillmentId}). Customer notified.`
-    );
-
-    console.log(`[Fulfill] ✅  Order ${order.shopify_order_num} fulfilled successfully`);
-
-    res.json({
-      success: true,
-      fulfillment_id: fulfillmentId,
-      message: 'Order fulfilled and customer notified',
-    });
-  } catch (err) {
-    console.error('[API] POST fulfill error:', err);
-    res.status(500).json({ error: err.message || 'Failed to fulfill order' });
-  }
-});
-
-// ── PATCH /api/orders/:id/notes — save internal notes ────────────────────────
-
-router.patch('/orders/:id/notes', (req, res) => {
-  try {
-    const { notes } = req.body;
-    const order = db.getOrderById(req.params.id);
-    if (!order) return res.status(404).json({ error: 'Order not found' });
-
-    db.updateNotes(order.id, notes || '');
+    db.updateNotes(order.id, req.body.notes || '');
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'Failed to save notes' });
   }
 });
 
-// ── Helper ────────────────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+// SUPPLIERS  (admin only)
+// ══════════════════════════════════════════════════════════════════════════════
 
-function parseOrderFields(order) {
-  return {
-    ...order,
-    shipping_address: safeParseJSON(order.shipping_address),
-    line_items:       safeParseJSON(order.line_items),
-    // Don't send raw_payload to frontend (can be large)
-    raw_payload: undefined,
-  };
-}
-
-function safeParseJSON(str) {
+router.get('/suppliers', adminOnly, (req, res) => {
   try {
-    return JSON.parse(str || 'null');
-  } catch {
-    return null;
+    res.json({ suppliers: suppDb.getAllSuppliers() });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch suppliers' });
   }
-}
+});
+
+router.post('/suppliers', adminOnly, (req, res) => {
+  try {
+    const { name, email, notes } = req.body;
+    if (!name || !email) return res.status(400).json({ error: 'name and email are required' });
+    const result   = suppDb.createSupplier({ name, email, notes });
+    const supplier = suppDb.getSupplierById(result.lastInsertRowid);
+    res.status(201).json({ supplier });
+  } catch (err) {
+    console.error('[API] POST /suppliers error:', err);
+    res.status(500).json({ error: 'Failed to create supplier' });
+  }
+});
+
+router.get('/suppliers/:id', adminOnly, (req, res) => {
+  const supplier = suppDb.getSupplierById(req.params.id);
+  if (!supplier) return res.status(404).json({ error: 'Supplier not found' });
+  const stats = asgDb.getAssignmentStats(supplier.id);
+  res.json({ supplier, stats });
+});
+
+router.put('/suppliers/:id', adminOnly, (req, res) => {
+  try {
+    const { name, email, notes, active } = req.body;
+    suppDb.updateSupplier(req.params.id, { name, email, notes, active });
+    const supplier = suppDb.getSupplierById(req.params.id);
+    res.json({ supplier });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update supplier' });
+  }
+});
+
+router.post('/suppliers/:id/rotate-token', adminOnly, (req, res) => {
+  try {
+    const supplier = suppDb.getSupplierById(req.params.id);
+    if (!supplier) return res.status(404).json({ error: 'Supplier not found' });
+    const token = suppDb.rotateToken(req.params.id);
+    res.json({ access_token: token });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to rotate token' });
+  }
+});
+
+router.delete('/suppliers/:id', adminOnly, (req, res) => {
+  try {
+    suppDb.deleteSupplier(req.params.id);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to delete supplier' });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ASSIGNMENT RULES  (admin only)
+// ══════════════════════════════════════════════════════════════════════════════
+
+router.get('/rules', adminOnly, (req, res) => {
+  try {
+    res.json({ rules: asgDb.getAllRules() });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch rules' });
+  }
+});
+
+router.post('/rules', adminOnly, (req, res) => {
+  try {
+    const { rule_type, rule_value, supplier_id, priority } = req.body;
+    const validTypes = ['sku', 'vendor', 'product_id', 'order_tag'];
+    if (!rule_type || !rule_value || !supplier_id) {
+      return res.status(400).json({ error: 'rule_type, rule_value, supplier_id are required' });
+    }
+    if (!validTypes.includes(rule_type)) {
+      return res.status(400).json({ error: `rule_type must be one of: ${validTypes.join(', ')}` });
+    }
+    const result = asgDb.createRule({ rule_type, rule_value, supplier_id, priority });
+    res.status(201).json({ id: result.lastInsertRowid });
+  } catch (err) {
+    console.error('[API] POST /rules error:', err);
+    res.status(500).json({ error: 'Failed to create rule' });
+  }
+});
+
+router.put('/rules/:id', adminOnly, (req, res) => {
+  try {
+    const { rule_type, rule_value, supplier_id, priority, active } = req.body;
+    asgDb.updateRule(req.params.id, { rule_type, rule_value, supplier_id, priority, active });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update rule' });
+  }
+});
+
+router.delete('/rules/:id', adminOnly, (req, res) => {
+  try {
+    asgDb.deleteRule(req.params.id);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to delete rule' });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// LINE ITEM ASSIGNMENTS  (admin only)
+// ══════════════════════════════════════════════════════════════════════════════
+
+router.get('/assignments', adminOnly, (req, res) => {
+  try {
+    const { supplierId, status, orderId, page = 1 } = req.query;
+    const limit  = 50;
+    const offset = (parseInt(page) - 1) * limit;
+    const { assignments, total } = asgDb.getAllAssignments({
+      supplierId: supplierId ? parseInt(supplierId) : undefined,
+      status,
+      orderId: orderId ? parseInt(orderId) : undefined,
+      limit,
+      offset,
+    });
+    res.json({ assignments, total, page: parseInt(page), pages: Math.ceil(total / limit) });
+  } catch (err) {
+    console.error('[API] GET /assignments error:', err);
+    res.status(500).json({ error: 'Failed to fetch assignments' });
+  }
+});
+
+// Admin manual override: reassign a line item to a different supplier (or unassign)
+router.patch('/assignments/:id', adminOnly, async (req, res) => {
+  try {
+    const { supplier_id } = req.body;
+    const assignment = asgDb.getAssignmentById(req.params.id);
+    if (!assignment) return res.status(404).json({ error: 'Assignment not found' });
+
+    reassignLineItem(req.params.id, supplier_id || null, null);
+
+    // Notify the new supplier if one was set
+    if (supplier_id) {
+      notifySupplier(supplier_id).catch(err =>
+        console.error('[API] Notification error:', err.message)
+      );
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[API] PATCH /assignments/:id error:', err);
+    res.status(500).json({ error: 'Failed to update assignment' });
+  }
+});
+
+// Trigger assignment engine for a specific order (admin — for orders that arrived before rules were set)
+router.post('/orders/:id/assign', adminOnly, (req, res) => {
+  try {
+    const order = db.getOrderById(req.params.id);
+    if (!order) return res.status(404).json({ error: 'Order not found' });
+
+    const { assignOrderLineItems, getAssignedSupplierIds } = require('../services/assignment');
+    const { notifySuppliers } = require('../services/notifications');
+
+    // Use the stored line_items JSON as a proxy for line items
+    const lineItems = safeJSON(order.line_items) || [];
+    // Convert simplified format back to Shopify-like shape for the engine
+    const shopifyItems = lineItems.map(li => ({
+      id:            li.id,
+      title:         li.title,
+      variant_title: li.variant || null,
+      sku:           li.sku    || null,
+      vendor:        li.vendor || null,
+      product_id:    li.product_id || null,
+      quantity:      li.quantity,
+      price:         li.price  || null,
+    }));
+
+    const assignments  = assignOrderLineItems(order, shopifyItems);
+    const supplierIds  = getAssignedSupplierIds(assignments);
+    notifySuppliers(supplierIds).catch(() => {});
+
+    const assigned   = assignments.filter(a => a.supplierId).length;
+    const unassigned = assignments.filter(a => !a.supplierId).length;
+    db.logActivity(order.id, 'assignment', `Manual re-assign: ${assigned} assigned, ${unassigned} unassigned`);
+
+    res.json({ success: true, assigned, unassigned, total: assignments.length });
+  } catch (err) {
+    console.error('[API] POST /orders/:id/assign error:', err);
+    res.status(500).json({ error: err.message || 'Assignment failed' });
+  }
+});
+
+// Admin: fulfill a supplier's line items via Shopify API
+router.post('/assignments/fulfill', adminOnly, async (req, res) => {
+  try {
+    const { order_id, supplier_id, tracking_number, tracking_carrier, tracking_url } = req.body;
+    if (!order_id || !supplier_id || !tracking_number || !tracking_carrier) {
+      return res.status(400).json({ error: 'order_id, supplier_id, tracking_number, tracking_carrier are required' });
+    }
+
+    const order = db.getOrderById(order_id);
+    if (!order) return res.status(404).json({ error: 'Order not found' });
+    if (order.financial_status !== 'paid') {
+      return res.status(400).json({ error: 'Order is not fully paid' });
+    }
+
+    // Update tracking in DB for all this supplier's items in this order
+    asgDb.updateAssignmentTracking(order_id, supplier_id, { tracking_number, tracking_carrier, tracking_url });
+
+    // Get all assigned (non-fulfilled) items for this supplier+order
+    const supplierAssignments = asgDb.getAssignmentsBySupplier(supplier_id)
+      .filter(a => a.order_id === parseInt(order_id) && a.status !== 'fulfilled');
+
+    const lineItemIds = supplierAssignments.map(a => a.shopify_line_item_id);
+
+    const fulfillment = await createFulfillmentForLineItems(
+      order.shopify_order_id,
+      lineItemIds,
+      { trackingNumber: tracking_number, trackingCarrier: tracking_carrier, trackingUrl: tracking_url }
+    );
+
+    const fulfillmentId = fulfillment.id.split('/').pop();
+    asgDb.markGroupFulfilled(order_id, supplier_id, fulfillmentId);
+
+    db.logActivity(order.id, 'fulfilled',
+      `Supplier ${supplier_id} items fulfilled in Shopify (fulfillment: ${fulfillmentId})`);
+
+    res.json({ success: true, fulfillment_id: fulfillmentId });
+  } catch (err) {
+    console.error('[API] POST /assignments/fulfill error:', err);
+    res.status(500).json({ error: err.message || 'Fulfillment failed' });
+  }
+});
 
 module.exports = router;

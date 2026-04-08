@@ -1,28 +1,42 @@
 /**
  * routes/dashboard.js
- * Serves the HTML dashboard pages.
- * The actual UI is in public/index.html (single-page app).
+ * Serves HTML pages and handles session-based auth.
+ *
+ * Auth flows:
+ *  - Admin:    POST /login { password } → session role=admin → GET /admin.html
+ *  - Supplier: GET  /s/:token           → session role=supplier → GET /supplier.html
  */
 
 const express = require('express');
 const router  = express.Router();
-const { requireAuth } = require('../middleware/auth');
+const path    = require('path');
+const crypto  = require('crypto');
+const { requireAuth, authenticateSupplierToken } = require('../middleware/auth');
 
-// ── Login ─────────────────────────────────────────────────────────────────────
+const PUBLIC = path.join(__dirname, '../../public');
+
+// ── Supplier token auth (/s/:token) ──────────────────────────────────────────
+
+router.get('/s/:token', authenticateSupplierToken);
+
+// ── Admin login ───────────────────────────────────────────────────────────────
 
 router.get('/login', (req, res) => {
-  // Only skip the login form if the session has BOTH authenticated AND role.
-  // Sessions created before the role-based system was introduced have
-  // authenticated=true but no role — force those users to re-login so they
-  // receive a proper role assignment. This was the root cause of "roles reversed".
-  if (req.session?.authenticated && req.session?.role) return res.redirect('/');
+  if (req.session?.authenticated && req.session?.role) {
+    return res.redirect(req.session.role === 'admin' ? '/' : '/supplier.html');
+  }
+
+  const errorMsg = {
+    invalid_token: 'Invalid or expired supplier link.',
+    1: 'Incorrect password.',
+  }[req.query.error] || '';
 
   res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Login — Order Dashboard</title>
+  <title>Login — Fulfillment Portal</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -77,18 +91,25 @@ router.get('/login', (req, res) => {
       color: #dc2626;
       font-size: 13px;
     }
+    .hint {
+      margin-top: 20px;
+      font-size: 12px;
+      color: #9ca3af;
+      text-align: center;
+    }
   </style>
 </head>
 <body>
   <div class="card">
-    <h1>📦 Order Dashboard</h1>
-    <p>Enter your password to access the order management dashboard.</p>
+    <h1>📦 Fulfillment Portal</h1>
+    <p>Admin login. Suppliers use their unique link.</p>
     <form method="POST" action="/login">
-      <label for="password">Password</label>
+      <label for="password">Admin Password</label>
       <input type="password" id="password" name="password" placeholder="Enter password" autofocus required>
       <button type="submit">Sign in</button>
-      ${req.query.error ? '<div class="error">Incorrect password. Try again.</div>' : ''}
+      ${errorMsg ? `<div class="error">${errorMsg}</div>` : ''}
     </form>
+    <p class="hint">Supplier? Use the link sent to you by email.</p>
   </div>
 </body>
 </html>`);
@@ -96,16 +117,12 @@ router.get('/login', (req, res) => {
 
 router.post('/login', (req, res) => {
   const { password } = req.body;
-  const adminPw    = process.env.ADMIN_PASSWORD;
-  const supplierPw = process.env.SUPPLIER_PASSWORD;
+  const adminPw = process.env.ADMIN_PASSWORD;
 
-  if (!adminPw || !supplierPw) {
-    return res.status(500).send('ADMIN_PASSWORD and SUPPLIER_PASSWORD must be configured.');
+  if (!adminPw) {
+    return res.status(500).send('ADMIN_PASSWORD must be configured.');
   }
 
-  const crypto = require('crypto');
-
-  // Constant-time comparison — always run both comparisons to prevent timing leaks
   function safeEq(input, expected) {
     try {
       const a = Buffer.from(input || '');
@@ -114,21 +131,16 @@ router.post('/login', (req, res) => {
     } catch { return false; }
   }
 
-  const isAdmin    = safeEq(password, adminPw);
-  const isSupplier = !isAdmin && safeEq(password, supplierPw);
-
-  const role = isAdmin ? 'admin' : isSupplier ? 'supplier' : null;
-
-  if (!role) return res.redirect('/login?error=1');
+  if (!safeEq(password, adminPw)) {
+    return res.redirect('/login?error=1');
+  }
 
   req.session.authenticated = true;
-  req.session.role = role;
+  req.session.role          = 'admin';
   const returnTo = req.session.returnTo || '/';
   delete req.session.returnTo;
 
-  // Save session before redirecting — async write must complete first or the
-  // next request will see an empty session and return 401.
-  req.session.save((err) => {
+  req.session.save(err => {
     if (err) {
       console.error('[Login] Session save failed:', err);
       return res.status(500).send('Login failed — please try again.');
@@ -141,10 +153,18 @@ router.post('/logout', (req, res) => {
   req.session.destroy(() => res.redirect('/login'));
 });
 
-// ── Dashboard (all routes served by single HTML page) ─────────────────────────
+// ── Admin SPA ─────────────────────────────────────────────────────────────────
 
 router.get('/', requireAuth, (req, res) => {
-  res.sendFile('index.html', { root: require('path').join(__dirname, '../../public') });
+  if (req.session.role === 'supplier') return res.redirect('/supplier.html');
+  res.sendFile('admin.html', { root: PUBLIC });
+});
+
+// ── Supplier SPA ──────────────────────────────────────────────────────────────
+
+router.get('/supplier.html', requireAuth, (req, res) => {
+  if (req.session.role !== 'supplier') return res.redirect('/');
+  res.sendFile('supplier.html', { root: PUBLIC });
 });
 
 module.exports = router;

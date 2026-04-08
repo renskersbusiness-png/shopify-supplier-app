@@ -12,6 +12,8 @@ const express = require('express');
 const router  = express.Router();
 
 const { createOrder, getOrderByShopifyId, updateOrderStatus, updateFinancialStatus, logActivity } = require('../db/orders');
+const { assignOrderLineItems, getAssignedSupplierIds } = require('../services/assignment');
+const { notifySuppliers } = require('../services/notifications');
 
 // ── HMAC Verification Middleware ──────────────────────────────────────────────
 
@@ -134,8 +136,30 @@ async function processNewOrder(payload) {
 
   const orderId = result.lastInsertRowid;
   logActivity(orderId, 'order_received', `Order ${payload.name} received from Shopify`);
+  console.log(`[Webhook] New order saved: ${payload.name} (ID: ${orderId})`);
 
-  console.log(`[Webhook] ✅  New order saved: ${payload.name} (ID: ${orderId})`);
+  // ── Run assignment engine ─────────────────────────────────────────────────
+  // Parse order tags (comma-separated string in Shopify payload)
+  const orderTags = (payload.tags || '').split(',').map(t => t.trim()).filter(Boolean);
+
+  try {
+    const order       = { id: orderId, shopify_order_id: shopifyOrderId };
+    const assignments = assignOrderLineItems(order, payload.line_items || [], orderTags);
+    const assigned    = assignments.filter(a => a.supplierId);
+
+    logActivity(orderId, 'assignment',
+      `${assigned.length}/${assignments.length} line item(s) auto-assigned`);
+
+    // Notify each affected supplier of their new items
+    const supplierIds = getAssignedSupplierIds(assignments);
+    if (supplierIds.length) {
+      notifySuppliers(supplierIds).catch(err =>
+        console.error('[Webhook] Notification error:', err.message)
+      );
+    }
+  } catch (err) {
+    console.error('[Webhook] Assignment engine error:', err.message);
+  }
 }
 
 // ── orders/paid ───────────────────────────────────────────────────────────────

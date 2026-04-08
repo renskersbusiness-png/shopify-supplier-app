@@ -1,29 +1,27 @@
 /**
  * middleware/auth.js
- * Password-based protection for the dashboard.
- * Supports two roles: 'admin' and 'supplier', determined at login by which
- * password was entered (ADMIN_PASSWORD vs SUPPLIER_PASSWORD).
+ * Auth middleware for admin (password) and supplier (token-in-URL) sessions.
+ *
+ * Admin login:    POST /api/login  { password }  → session.role='admin'
+ * Supplier login: GET  /s/:token               → session.role='supplier', session.supplierId
  */
 
+const { getSupplierByToken } = require('../db/suppliers');
+
+// ── Session-based auth (admin + supplier) ─────────────────────────────────────
+
 function requireAuth(req, res, next) {
-  if (req.session && req.session.authenticated) {
+  if (req.session && req.session.authenticated && req.session.role) {
     return next();
   }
-
-  // API routes must return JSON — never redirect to an HTML login page,
-  // because the frontend fetch() would receive HTML and throw "Unexpected token '<'"
   if (req.originalUrl.startsWith('/api')) {
     return res.status(401).json({ error: 'Not authenticated' });
   }
-
-  // Dashboard HTML routes: store the destination and redirect to login
   req.session.returnTo = req.originalUrl;
   res.redirect('/login');
 }
 
-// Middleware factory — restricts a route to a specific role.
-// Only used for routes that must be admin-only; most role logic lives in the
-// route handlers themselves so they can return role-appropriate data.
+// Middleware factory — restricts route to a specific role
 function requireRole(role) {
   return (req, res, next) => {
     if (req.session && req.session.role === role) return next();
@@ -34,4 +32,45 @@ function requireRole(role) {
   };
 }
 
-module.exports = { requireAuth, requireRole };
+// ── Token-based supplier auth (/s/:token) ─────────────────────────────────────
+
+/**
+ * authenticateSupplierToken
+ * Used as a route handler for GET /s/:token.
+ * Looks up the supplier by token, sets session, then redirects to /supplier.html.
+ * If invalid, redirects to /login with ?error=invalid_token.
+ */
+function authenticateSupplierToken(req, res) {
+  const { token } = req.params;
+  const supplier  = getSupplierByToken(token);
+
+  if (!supplier) {
+    return res.redirect('/login?error=invalid_token');
+  }
+
+  req.session.authenticated = true;
+  req.session.role          = 'supplier';
+  req.session.supplierId    = supplier.id;
+  req.session.supplierName  = supplier.name;
+  req.session.supplierToken = token;
+
+  res.redirect('/supplier.html');
+}
+
+/**
+ * requireSupplierSession
+ * Guards supplier API routes — must be authenticated with role=supplier.
+ */
+function requireSupplierSession(req, res, next) {
+  if (req.session && req.session.role === 'supplier' && req.session.supplierId) {
+    return next();
+  }
+  return res.status(401).json({ error: 'Not authenticated as supplier' });
+}
+
+module.exports = {
+  requireAuth,
+  requireRole,
+  authenticateSupplierToken,
+  requireSupplierSession,
+};

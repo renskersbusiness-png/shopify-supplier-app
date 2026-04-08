@@ -133,6 +133,10 @@ async function getFulfillableItems(shopifyOrderId) {
 // This marks the order as fulfilled in Shopify and sends the tracking email
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * createFulfillment — fulfills ALL open line items for an order.
+ * Legacy / single-supplier path.
+ */
 async function createFulfillment({ shopifyOrderId, trackingNumber, trackingCarrier, trackingUrl }) {
   // First, get the fulfillment order IDs
   const fulfillmentOrders = await getFulfillmentOrders(shopifyOrderId);
@@ -358,11 +362,92 @@ async function fetchOrderFromShopify(shopifyOrderId) {
   return order;
 }
 
+/**
+ * createFulfillmentForLineItems — fulfills only the specified Shopify line items.
+ * Used for per-supplier fulfillment in the multi-supplier flow.
+ *
+ * @param {string}   shopifyOrderId      — numeric Shopify order ID (as string)
+ * @param {string[]} shopifyLineItemIds  — array of numeric Shopify line item IDs (as strings)
+ * @param {Object}   tracking            — { trackingNumber, trackingCarrier, trackingUrl }
+ */
+async function createFulfillmentForLineItems(shopifyOrderId, shopifyLineItemIds, { trackingNumber, trackingCarrier, trackingUrl }) {
+  const fulfillmentOrders = await getFulfillmentOrders(shopifyOrderId);
+  const openOrders        = fulfillmentOrders.filter(fo => fo.status === 'OPEN');
+
+  if (!openOrders.length) {
+    throw new Error('No open fulfillment orders found.');
+  }
+
+  // Shopify line item IDs in fulfillment order nodes are global IDs:
+  // gid://shopify/LineItem/1234567890
+  // The shopifyLineItemIds we store are the numeric part.
+  const targetSet = new Set(shopifyLineItemIds.map(String));
+
+  const fulfillmentOrderLineItems = [];
+
+  for (const fo of openOrders) {
+    const matchedItems = fo.lineItems.nodes.filter(li => {
+      // li.lineItem.id = "gid://shopify/LineItem/1234567890"
+      const numericId = (li.lineItem?.id || '').split('/').pop();
+      return targetSet.has(numericId) && li.remainingQuantity > 0;
+    });
+
+    if (matchedItems.length) {
+      fulfillmentOrderLineItems.push({
+        fulfillmentOrderId:        fo.id,
+        fulfillmentOrderLineItems: matchedItems.map(li => ({
+          id:       li.id,
+          quantity: li.remainingQuantity,
+        })),
+      });
+    }
+  }
+
+  if (!fulfillmentOrderLineItems.length) {
+    throw new Error('None of the specified line items were found in open fulfillment orders.');
+  }
+
+  const mutation = `
+    mutation fulfillmentCreate($fulfillment: FulfillmentV2Input!) {
+      fulfillmentCreateV2(fulfillment: $fulfillment) {
+        fulfillment {
+          id
+          status
+          trackingInfo { number url }
+        }
+        userErrors { field message }
+      }
+    }
+  `;
+
+  const variables = {
+    fulfillment: {
+      notifyCustomer: true,
+      trackingInfo: {
+        number:  trackingNumber,
+        url:     trackingUrl || buildTrackingUrl(trackingCarrier, trackingNumber),
+        company: normalizeCarrier(trackingCarrier),
+      },
+      lineItemsByFulfillmentOrder: fulfillmentOrderLineItems,
+    },
+  };
+
+  const data   = await shopifyGraphQL(mutation, variables);
+  const result = data.fulfillmentCreateV2;
+
+  if (result.userErrors?.length) {
+    throw new Error(`Fulfillment errors: ${JSON.stringify(result.userErrors)}`);
+  }
+
+  return result.fulfillment;
+}
+
 module.exports = {
   shopifyGraphQL,
   getFulfillmentOrders,
   getFulfillableItems,
   createFulfillment,
+  createFulfillmentForLineItems,
   syncRecentOrders,
   fetchOrderFromShopify,
 };
