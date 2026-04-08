@@ -11,7 +11,11 @@ const { requireAuth } = require('../middleware/auth');
 // ── Login ─────────────────────────────────────────────────────────────────────
 
 router.get('/login', (req, res) => {
-  if (req.session?.authenticated) return res.redirect('/');
+  // Only skip the login form if the session has BOTH authenticated AND role.
+  // Sessions created before the role-based system was introduced have
+  // authenticated=true but no role — force those users to re-login so they
+  // receive a proper role assignment. This was the root cause of "roles reversed".
+  if (req.session?.authenticated && req.session?.role) return res.redirect('/');
 
   res.send(`<!DOCTYPE html>
 <html lang="en">

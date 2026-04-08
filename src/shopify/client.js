@@ -254,10 +254,11 @@ async function syncRecentOrders() {
       customer_phone:     address.phone || order.phone  || null,
       shipping_address:   JSON.stringify(address),
       line_items:         JSON.stringify(lineItems),
-      total_price:        order.total_price || '0.00',
-      currency:           order.currency    || 'USD',
+      total_price:        order.total_price      || '0.00',
+      currency:           order.currency         || 'USD',
+      financial_status:   order.financial_status || 'pending',
       raw_payload:        JSON.stringify(order),
-      shopify_created_at: order.created_at  || null,
+      shopify_created_at: order.created_at       || null,
     });
 
     logActivity(result.lastInsertRowid, 'order_received', `Order ${order.name} synced on startup`);

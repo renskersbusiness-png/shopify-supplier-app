@@ -37,12 +37,11 @@ router.get('/orders', (req, res) => {
     const offset = (parseInt(page) - 1) * limit;
     const isAdmin = req.session.role === 'admin';
 
-    // Suppliers never see pending (unpaid) orders.
-    // Admins see all orders — unless they explicitly filter by a specific status,
-    // in which case excludePending is irrelevant anyway.
-    const excludePending = !isAdmin && (!status || status === 'all');
+    // Suppliers only see orders with payment on file (authorized, partially_paid,
+    // paid, partially_refunded). Admins see everything.
+    const supplierOnly = !isAdmin;
 
-    const { orders, total } = db.getAllOrders({ status, search, limit, offset, excludePending });
+    const { orders, total } = db.getAllOrders({ status, search, limit, offset, supplierOnly });
 
     // Parse JSON fields before sending to client
     const parsed = orders.map(parseOrderFields);
@@ -79,7 +78,7 @@ router.get('/orders/:id', (req, res) => {
 router.get('/stats', (req, res) => {
   try {
     const isAdmin = req.session.role === 'admin';
-    res.json(db.getStats({ excludePending: !isAdmin }));
+    res.json(db.getStats({ supplierOnly: !isAdmin }));
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch stats' });
   }
@@ -103,8 +102,8 @@ router.patch('/orders/:id/status', (req, res) => {
       return res.status(400).json({ error: 'Cannot change the status of a fulfilled order' });
     }
 
-    // Suppliers cannot act on unpaid (pending) orders
-    if (req.session.role !== 'admin' && order.status === 'pending') {
+    // Suppliers cannot act on orders with no payment on file
+    if (req.session.role !== 'admin' && order.financial_status === 'pending') {
       return res.status(403).json({ error: 'Order not yet confirmed as paid' });
     }
 
@@ -162,8 +161,8 @@ router.post('/orders/:id/fulfill', async (req, res) => {
       return res.status(400).json({ error: 'Order is already fulfilled' });
     }
 
-    // Suppliers cannot fulfill unpaid (pending) orders
-    if (req.session.role !== 'admin' && order.status === 'pending') {
+    // Suppliers cannot fulfill orders with no payment on file
+    if (req.session.role !== 'admin' && order.financial_status === 'pending') {
       return res.status(403).json({ error: 'Order not yet confirmed as paid' });
     }
 

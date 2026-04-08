@@ -11,7 +11,7 @@ const crypto = require('crypto');
 const express = require('express');
 const router  = express.Router();
 
-const { createOrder, getOrderByShopifyId, updateOrderStatus, logActivity } = require('../db/orders');
+const { createOrder, getOrderByShopifyId, updateOrderStatus, updateFinancialStatus, logActivity } = require('../db/orders');
 
 // ── HMAC Verification Middleware ──────────────────────────────────────────────
 
@@ -125,10 +125,11 @@ async function processNewOrder(payload) {
     customer_phone:    address.phone || payload.phone || null,
     shipping_address:  JSON.stringify(address),
     line_items:        JSON.stringify(lineItems),
-    total_price:       payload.total_price || '0.00',
-    currency:          payload.currency    || 'USD',
+    total_price:       payload.total_price    || '0.00',
+    currency:          payload.currency       || 'USD',
+    financial_status:  payload.financial_status || 'pending',
     raw_payload:       JSON.stringify(payload),
-    shopify_created_at: payload.created_at || null,
+    shopify_created_at: payload.created_at   || null,
   });
 
   const orderId = result.lastInsertRowid;
@@ -171,6 +172,7 @@ router.post('/orders/paid', verifyShopifyWebhook, (req, res) => {
   }
 
   updateOrderStatus(order.id, 'processing');
+  updateFinancialStatus(order.id, 'paid');
   logActivity(order.id, 'status_change', 'Status set to "processing" (payment confirmed by Shopify)');
   console.log(`[Webhook] orders/paid: ${order.shopify_order_num} → processing ✓`);
 });
@@ -193,10 +195,10 @@ router.post('/fulfillments/create', verifyShopifyWebhook, (req, res) => {
   }
 
   // Block if the order has not been confirmed as paid yet.
-  // pending = awaiting payment; only process confirmed-paid orders.
-  if (order.status === 'pending') {
+  // Use financial_status (from Shopify) as the authoritative payment signal.
+  if (order.financial_status === 'pending') {
     console.log(
-      `[Webhook] fulfillments/create: order ${order.shopify_order_num} is still pending (unpaid) — skipping`
+      `[Webhook] fulfillments/create: order ${order.shopify_order_num} is still unpaid (financial_status=pending) — skipping`
     );
     return;
   }
@@ -214,6 +216,47 @@ router.post('/fulfillments/create', verifyShopifyWebhook, (req, res) => {
     `Status set to "shipped" (Shopify fulfillment ${req.body.id} created)`
   );
   console.log(`[Webhook] fulfillments/create: ${order.shopify_order_num} → shipped`);
+});
+
+// ── orders/updated ────────────────────────────────────────────────────────────
+// Fired by Shopify whenever an order is modified (payment, line items, etc.).
+// We use it to track financial_status changes, specifically to catch partial
+// payments (partially_paid) which have no dedicated webhook topic.
+
+router.post('/orders/updated', verifyShopifyWebhook, (req, res) => {
+  res.status(200).json({ received: true });
+
+  const shopifyOrderId  = String(req.body.id);
+  const financialStatus = req.body.financial_status;
+
+  if (!financialStatus) return; // nothing payment-related changed
+
+  const order = getOrderByShopifyId(shopifyOrderId);
+  if (!order) {
+    console.log(`[Webhook] orders/updated: order ${shopifyOrderId} not in DB — skipping`);
+    return;
+  }
+
+  // Always sync the latest financial_status from Shopify
+  updateFinancialStatus(order.id, financialStatus);
+
+  // Advance pending → processing for any confirmed or partial payment
+  if (order.status === 'pending' && (financialStatus === 'paid' || financialStatus === 'partially_paid' || financialStatus === 'authorized')) {
+    updateOrderStatus(order.id, 'processing');
+    logActivity(
+      order.id,
+      'status_change',
+      `Status set to "processing" (financial_status: ${financialStatus})`
+    );
+    console.log(`[Webhook] orders/updated: ${order.shopify_order_num} → processing (${financialStatus})`);
+    return;
+  }
+
+  // For refunded/voided: log it but don't change workflow status
+  if (financialStatus === 'refunded' || financialStatus === 'voided') {
+    logActivity(order.id, 'status_change', `Payment ${financialStatus} — order hidden from supplier`);
+    console.log(`[Webhook] orders/updated: ${order.shopify_order_num} financial_status → ${financialStatus}`);
+  }
 });
 
 // ── Shopify webhook health check ──────────────────────────────────────────────

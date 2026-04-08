@@ -16,13 +16,13 @@ function createOrder(data) {
       customer_name, customer_email, customer_phone,
       shipping_address, line_items,
       total_price, currency,
-      status, raw_payload, shopify_created_at
+      status, financial_status, raw_payload, shopify_created_at
     ) VALUES (
       @shopify_order_id, @shopify_order_num,
       @customer_name, @customer_email, @customer_phone,
       @shipping_address, @line_items,
       @total_price, @currency,
-      'pending', @raw_payload, @shopify_created_at
+      'pending', @financial_status, @raw_payload, @shopify_created_at
     )
   `);
   return stmt.run(data);
@@ -30,7 +30,11 @@ function createOrder(data) {
 
 // ── Read ──────────────────────────────────────────────────────────────────────
 
-function getAllOrders({ status, search, limit = 50, offset = 0, excludePending = false } = {}) {
+// financial_status values that suppliers are allowed to see.
+// Unpaid (pending), voided, and refunded orders are admin-only.
+const SUPPLIER_VISIBLE_FINANCIAL = `financial_status IN ('authorized', 'partially_paid', 'paid', 'partially_refunded')`;
+
+function getAllOrders({ status, search, limit = 50, offset = 0, supplierOnly = false } = {}) {
   const db = getDb();
 
   let where = [];
@@ -39,9 +43,13 @@ function getAllOrders({ status, search, limit = 50, offset = 0, excludePending =
   if (status && status !== 'all') {
     where.push('status = @status');
     params.status = status;
-  } else if (excludePending) {
-    // Supplier view: hide orders that have not yet been confirmed as paid
-    where.push("status != 'pending'");
+  }
+
+  // Supplier view: show only orders with a payment on file.
+  // This uses Shopify's financial_status rather than our internal workflow
+  // status, so partially-paid and authorized orders are also visible.
+  if (supplierOnly) {
+    where.push(SUPPLIER_VISIBLE_FINANCIAL);
   }
 
   if (search) {
@@ -87,6 +95,12 @@ function updateOrderStatus(id, status) {
     .run(status, id);
 }
 
+function updateFinancialStatus(id, financialStatus) {
+  return getDb()
+    .prepare('UPDATE orders SET financial_status = ? WHERE id = ?')
+    .run(financialStatus, id);
+}
+
 function updateTracking(id, { tracking_number, tracking_carrier, tracking_url }) {
   // Do not downgrade a fulfilled order — update tracking fields only.
   // For every other status, also advance to 'shipped'.
@@ -116,15 +130,18 @@ function updateNotes(id, notes) {
 
 // ── Stats (for dashboard header) ─────────────────────────────────────────────
 
-function getStats({ excludePending = false } = {}) {
+function getStats({ supplierOnly = false } = {}) {
   const db = getDb();
-  // When excludePending is true: total and all buckets count only confirmed-paid
-  // orders. The pending row returns 0 because it is excluded by the WHERE clause.
-  const where = excludePending ? "WHERE status != 'pending'" : '';
+  // Supplier view: only count orders that have some payment on file.
+  // Admin view: count everything, including unpaid orders.
+  const where = supplierOnly
+    ? `WHERE ${SUPPLIER_VISIBLE_FINANCIAL}`
+    : '';
   return db.prepare(`
     SELECT
       COUNT(*) as total,
-      SUM(CASE WHEN status = 'pending'    THEN 1 ELSE 0 END) as pending,
+      SUM(CASE WHEN financial_status = 'pending' THEN 1 ELSE 0 END)  as pending,
+      SUM(CASE WHEN financial_status = 'partially_paid' THEN 1 ELSE 0 END) as partially_paid,
       SUM(CASE WHEN status = 'processing' THEN 1 ELSE 0 END) as processing,
       SUM(CASE WHEN status = 'shipped'    THEN 1 ELSE 0 END) as shipped,
       SUM(CASE WHEN status = 'fulfilled'  THEN 1 ELSE 0 END) as fulfilled
@@ -157,6 +174,7 @@ module.exports = {
   getOrderById,
   getOrderByShopifyId,
   updateOrderStatus,
+  updateFinancialStatus,
   updateTracking,
   markFulfilled,
   updateNotes,

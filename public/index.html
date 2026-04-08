@@ -67,7 +67,7 @@
     /* ─── Stat Cards ──────────────────────────────────────────────── */
     .stats-grid {
       display: grid;
-      grid-template-columns: repeat(5, 1fr);
+      grid-template-columns: repeat(6, 1fr);
       gap: 14px;
       margin-bottom: 24px;
     }
@@ -169,6 +169,8 @@
     .badge-processing { background: #dbeafe; color: #2563eb; } .badge-processing::before { background: #2563eb; }
     .badge-shipped    { background: #ede9fe; color: #7c3aed; } .badge-shipped::before    { background: #7c3aed; }
     .badge-fulfilled  { background: #d1fae5; color: #059669; } .badge-fulfilled::before  { background: #059669; }
+    .badge-partial    { background: #fff7ed; color: #c2410c; } .badge-partial::before    { background: #c2410c; }
+    .badge-refunded   { background: #f3f4f6; color: #6b7280; } .badge-refunded::before   { background: #6b7280; }
 
     /* ─── Pagination ──────────────────────────────────────────────── */
     .pagination {
@@ -327,6 +329,9 @@
 
     .loading { opacity: 0.6; pointer-events: none; }
 
+    @media (max-width: 1100px) {
+      .stats-grid { grid-template-columns: repeat(3, 1fr); }
+    }
     @media (max-width: 900px) {
       .sidebar { width: 60px; }
       .nav-item span, .sidebar-logo span { display: none; }
@@ -392,9 +397,13 @@
         <div class="stat-label">Total</div>
         <div class="stat-value" id="stat-total">—</div>
       </div>
-      <div class="stat-card pending" id="stat-card-pending" onclick="filterByStatus('pending')">
-        <div class="stat-label">Pending</div>
+      <div class="stat-card pending" id="stat-card-pending" onclick="filterByStatus('pending')" title="Unpaid orders — hidden from supplier">
+        <div class="stat-label">Unpaid</div>
         <div class="stat-value" id="stat-pending">—</div>
+      </div>
+      <div class="stat-card" id="stat-card-partial" onclick="filterByStatus('processing')" title="Partially paid orders — visible to supplier" style="border-color:#fed7aa">
+        <div class="stat-label" style="color:#9a3412">Partial Pay</div>
+        <div class="stat-value" id="stat-partial" style="color:#c2410c">—</div>
       </div>
       <div class="stat-card processing" onclick="filterByStatus('processing')">
         <div class="stat-label">Processing</div>
@@ -484,9 +493,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 function applyRoleUI() {
   const isAdmin = userRole === 'admin';
-  // Show/hide the Pending nav item and stat card — suppliers never see pending orders
-  document.getElementById('nav-pending').style.display        = isAdmin ? '' : 'none';
-  document.getElementById('stat-card-pending').style.display  = isAdmin ? '' : 'none';
+  // Admin-only cards: unpaid (pending) and partial payment monitoring
+  document.getElementById('nav-pending').style.display       = isAdmin ? '' : 'none';
+  document.getElementById('stat-card-pending').style.display = isAdmin ? '' : 'none';
+  document.getElementById('stat-card-partial').style.display = isAdmin ? '' : 'none';
   // Show role label in sidebar footer
   document.getElementById('role-label').textContent = isAdmin ? 'Admin' : 'Supplier';
 }
@@ -495,11 +505,12 @@ function applyRoleUI() {
 async function loadStats() {
   try {
     const r = await api('/api/stats');
-    document.getElementById('stat-total').textContent     = r.total     || 0;
-    document.getElementById('stat-pending').textContent   = r.pending   || 0;
-    document.getElementById('stat-processing').textContent = r.processing || 0;
-    document.getElementById('stat-shipped').textContent   = r.shipped   || 0;
-    document.getElementById('stat-fulfilled').textContent = r.fulfilled || 0;
+    document.getElementById('stat-total').textContent      = r.total         || 0;
+    document.getElementById('stat-pending').textContent    = r.pending        || 0;
+    document.getElementById('stat-partial').textContent    = r.partially_paid || 0;
+    document.getElementById('stat-processing').textContent = r.processing      || 0;
+    document.getElementById('stat-shipped').textContent    = r.shipped         || 0;
+    document.getElementById('stat-fulfilled').textContent  = r.fulfilled       || 0;
   } catch(e) { console.error(e); }
 }
 
@@ -534,7 +545,10 @@ async function loadOrders() {
         </td>
         <td>${formatItems(o.line_items)}</td>
         <td><strong>${esc(o.currency)} ${esc(o.total_price)}</strong></td>
-        <td>${statusBadge(o.status)}</td>
+        <td>
+          ${statusBadge(o.status)}
+          ${paymentBadge(o.financial_status, o.status)}
+        </td>
         <td style="color:#6b7280;font-size:12px">${formatDate(o.shopify_created_at || o.created_at)}</td>
         <td><button class="btn btn-secondary btn-sm" onclick="openOrder(${o.id})">View →</button></td>
       </tr>
@@ -614,10 +628,21 @@ function renderOrderDetail(o, log) {
   return `
     <!-- Status + Actions -->
     <div class="section">
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">
         ${statusBadge(o.status)}
+        ${paymentBadge(o.financial_status, o.status)}
         <span style="font-size:12px;color:#9ca3af">${formatDate(o.shopify_created_at || o.created_at)}</span>
       </div>
+      ${o.financial_status === 'partially_paid' ? `
+        <div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:13px;color:#9a3412">
+          <strong>Partial Payment:</strong> This order has not been fully paid.
+          Total: ${esc(o.currency)} ${esc(o.total_price)} — part of this amount is still outstanding.
+          ${userRole === 'admin' ? 'You can still manually adjust the workflow status.' : 'You can add tracking and fulfill what is ready.'}
+        </div>` : ''}
+      ${o.financial_status === 'refunded' || o.financial_status === 'voided' ? `
+        <div style="background:#f3f4f6;border:1px solid #d1d5db;border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:13px;color:#6b7280">
+          <strong>Payment ${esc(o.financial_status)}.</strong> This order has been cancelled or refunded.
+        </div>` : ''}
 
       <div class="action-bar">
         ${o.status === 'pending' && userRole === 'admin' ? `
@@ -833,6 +858,21 @@ async function api(url, method = 'GET', body) {
 
 function statusBadge(status) {
   return `<span class="badge badge-${status}">${status}</span>`;
+}
+
+// Show a secondary payment badge only when it adds information beyond the
+// workflow status badge — i.e. when payment is partial, refunded, or voided.
+function paymentBadge(financialStatus, workflowStatus) {
+  if (financialStatus === 'partially_paid') {
+    return `<span class="badge badge-partial">Partial Pay</span>`;
+  }
+  if (financialStatus === 'refunded') {
+    return `<span class="badge badge-refunded">Refunded</span>`;
+  }
+  if (financialStatus === 'voided') {
+    return `<span class="badge badge-refunded">Voided</span>`;
+  }
+  return '';
 }
 
 function formatItems(items) {
