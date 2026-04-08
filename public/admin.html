@@ -691,10 +691,10 @@ function renderOrderDetail(o, log, assignments) {
       <div class="section-title">Activity Log</div>
       <div class="activity-log">
         ${(log.length ? log : []).map(l => `
-          <div class="log-entry ${esc(l.event_type)}">
+          <div class="log-entry ${esc(l.action)}">
             <div class="log-dot"></div>
             <div>
-              <div class="log-text">${esc(l.description)}</div>
+              <div class="log-text">${esc(l.detail)}</div>
               <span class="log-time">${formatDate(l.created_at)}</span>
             </div>
           </div>`).join('') || '<div style="color:#9ca3af;font-size:13px">No activity yet</div>'}
