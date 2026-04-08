@@ -107,6 +107,23 @@ app.use((err, req, res, next) => {
 
 // ── Start ─────────────────────────────────────────────────────────────────────
 const { syncRecentOrders } = require('./shopify/client');
+const path = require('path');
+
+// Warn loudly if the DB is in the default ephemeral path on a cloud host.
+// On Railway: create a Volume, mount it at /data, set DB_PATH=/data/orders.db
+const dbPath = process.env.DB_PATH || './data/orders.db';
+if (!process.env.DB_PATH && process.env.RAILWAY_ENVIRONMENT) {
+  console.warn('');
+  console.warn('⚠️  WARNING: DB_PATH is not set but running on Railway.');
+  console.warn('   The database is stored in the container filesystem and will');
+  console.warn('   be WIPED on every deploy, deleting all suppliers, rules, and');
+  console.warn('   assignments. To fix this:');
+  console.warn('   1. Create a Railway Volume');
+  console.warn('   2. Mount it at /data');
+  console.warn('   3. Set DB_PATH=/data/orders.db in Railway env vars');
+  console.warn('');
+}
+console.log(`[DB] Path: ${path.resolve(dbPath)}`);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {

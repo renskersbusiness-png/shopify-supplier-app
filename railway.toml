@@ -1,12 +1,7 @@
-# railway.toml — Railway deployment configuration
 [build]
 builder = "nixpacks"
 
 [deploy]
-startCommand = "node src/db/setup.js && node src/server.js"
+startCommand = "node src/server.js"
 healthcheckPath = "/health"
 healthcheckTimeout = 30
-restartPolicyType = "on_failure"
-
-[[services]]
-name = "shopify-supplier-app"
