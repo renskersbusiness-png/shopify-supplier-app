@@ -93,18 +93,40 @@ function buildAssignmentEmail(supplier, assignments, appUrl) {
  * notifySupplier(supplierId)
  * Sends one email for all unnotified assigned items for this supplier,
  * then marks them as notified. No-ops if nothing to send or SMTP not configured.
+ *
+ * Required scopes / env vars: SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM, APP_URL
  */
 async function notifySupplier(supplierId) {
+  console.log(`[email] notifySupplier called for supplierId=${supplierId}`);
+
   if (!process.env.SMTP_HOST) {
-    console.log('[notify] SMTP_HOST not set — skipping notification');
+    console.log(`[email] skipped → SMTP_HOST not set (configure SMTP env vars to enable email)`);
     return;
   }
 
-  const supplier    = getSupplierById(supplierId);
-  if (!supplier) return;
+  const supplier = getSupplierById(supplierId);
+  if (!supplier) {
+    console.log(`[email] supplier not found → supplierId=${supplierId}`);
+    return;
+  }
+
+  if (!supplier.active) {
+    console.log(`[email] skipped → supplier "${supplier.name}" (id=${supplierId}) is inactive`);
+    return;
+  }
+
+  if (!supplier.email) {
+    console.log(`[email] skipped → supplier "${supplier.name}" (id=${supplierId}) has no email address`);
+    return;
+  }
 
   const assignments = getUnnotifiedAssignments(supplierId);
-  if (!assignments.length) return;
+  if (!assignments.length) {
+    console.log(`[email] skipped → no unnotified assignments for supplier "${supplier.name}" (id=${supplierId})`);
+    return;
+  }
+
+  console.log(`[email] sending to ${supplier.email} — ${assignments.length} unnotified assignment(s) for supplier "${supplier.name}"`);
 
   const appUrl = process.env.APP_URL || 'http://localhost:3000';
   const { html, text } = buildAssignmentEmail(supplier, assignments, appUrl);
@@ -120,9 +142,10 @@ async function notifySupplier(supplierId) {
     });
 
     markNotified(assignments.map(a => a.id));
-    console.log(`[notify] sent ${assignments.length} item notification(s) to supplier ${supplierId} (${supplier.email})`);
+    console.log(`[email] sent successfully to ${supplier.email} (${assignments.length} item(s), supplier "${supplier.name}")`);
   } catch (err) {
-    console.error(`[notify] failed to send to supplier ${supplierId}:`, err.message);
+    console.error(`[email] failed → SMTP error for supplier "${supplier.name}" (${supplier.email}): ${err.message}`);
+    console.error(`[email] full error:`, err);
   }
 }
 

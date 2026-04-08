@@ -52,6 +52,8 @@ async function _request(query, variables, isRetry) {
   const json = await res.json();
 
   if (json.errors) {
+    // Log the full error array — ACCESS_DENIED, scope issues, etc. all surface here
+    console.error('[Shopify] GraphQL errors:', JSON.stringify(json.errors, null, 2));
     throw new Error(`Shopify GraphQL error: ${JSON.stringify(json.errors)}`);
   }
 
@@ -61,6 +63,19 @@ async function _request(query, variables, isRetry) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Step 1: Get the fulfillment order ID for a given Shopify order
 // (Required before creating a fulfillment)
+//
+// REQUIRED SHOPIFY APP SCOPES (configure in Partner Dashboard → App → Configuration):
+//   read_merchant_managed_fulfillment_orders   ← needed to query fulfillmentOrders
+//   write_merchant_managed_fulfillment_orders  ← needed to create fulfillments
+//
+// NOTE: Use the *merchant_managed* variants, NOT assigned_fulfillment_orders.
+// assigned_fulfillment_orders is for 3PL / external fulfillment services only.
+//
+// If you get ACCESS_DENIED on this query, the app is missing these scopes.
+// You MUST reinstall/reauthorize the app after adding scopes in the Partner Dashboard:
+//   1. Add both scopes in Partner Dashboard → App → Configuration → Admin API access scopes
+//   2. Uninstall the app from your Shopify store
+//   3. Reinstall via the install URL (or Partner Dashboard → Test on development store)
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function getFulfillmentOrders(shopifyOrderId) {

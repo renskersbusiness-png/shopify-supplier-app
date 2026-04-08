@@ -106,14 +106,16 @@ router.patch('/tracking', async (req, res) => {
     }
 
     // Update tracking in DB
+    console.log(`[tracking] saving for order_id=${order_id} supplier=${supplierId} carrier=${tracking_carrier} number=${tracking_number}`);
     updateAssignmentTracking(order_id, supplierId, { tracking_number, tracking_carrier, tracking_url: tracking_url || null });
 
     logActivity(order.id, 'tracking_added',
       `Supplier ${supplierId} added tracking: ${tracking_carrier} — ${tracking_number}`);
 
+    console.log(`[tracking] saved successfully for order_id=${order_id} (${orderItems.length} item(s))`);
     res.json({ success: true });
   } catch (err) {
-    console.error('[Supplier API] PATCH /tracking error:', err);
+    console.error('[tracking] failed →', err.message, err);
     res.status(500).json({ error: 'Failed to update tracking' });
   }
 });
@@ -156,11 +158,20 @@ router.post('/fulfill', async (req, res) => {
 
     const lineItemIds = orderItems.map(a => a.shopify_line_item_id);
 
-    const fulfillment = await createFulfillmentForLineItems(
-      order.shopify_order_id,
-      lineItemIds,
-      { trackingNumber, trackingCarrier, trackingUrl }
-    );
+    console.log(`[fulfillment] sending to Shopify — order=${order.shopify_order_id} supplier=${supplierId} items=[${lineItemIds.join(',')}] carrier=${trackingCarrier} tracking=${trackingNumber}`);
+
+    let fulfillment;
+    try {
+      fulfillment = await createFulfillmentForLineItems(
+        order.shopify_order_id,
+        lineItemIds,
+        { trackingNumber, trackingCarrier, trackingUrl }
+      );
+    } catch (shopifyErr) {
+      console.error(`[fulfillment] failed → Shopify error for order=${order.shopify_order_id}:`, shopifyErr.message);
+      console.error(`[fulfillment] full Shopify error:`, shopifyErr);
+      return res.status(502).json({ error: shopifyErr.message || 'Shopify fulfillment failed' });
+    }
 
     const fulfillmentId = fulfillment.id.split('/').pop();
     markGroupFulfilled(order_id, supplierId, fulfillmentId);
@@ -168,9 +179,10 @@ router.post('/fulfill', async (req, res) => {
     logActivity(order.id, 'fulfilled',
       `Supplier ${supplierId} fulfilled ${lineItemIds.length} item(s) in Shopify (fulfillment: ${fulfillmentId})`);
 
+    console.log(`[fulfillment] success — fulfillment_id=${fulfillmentId} order=${order.shopify_order_id} supplier=${supplierId}`);
     res.json({ success: true, fulfillment_id: fulfillmentId });
   } catch (err) {
-    console.error('[Supplier API] POST /fulfill error:', err);
+    console.error('[fulfillment] failed → unexpected error:', err.message, err);
     res.status(500).json({ error: err.message || 'Fulfillment failed' });
   }
 });
