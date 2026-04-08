@@ -69,14 +69,24 @@ async function getFulfillmentOrders(shopifyOrderId) {
       order(id: $id) {
         id
         name
-        fulfillmentOrders(first: 5) {
+        fulfillmentOrders(first: 10) {
           nodes {
             id
             status
-            lineItems(first: 20) {
+            lineItems(first: 30) {
               nodes {
                 id
                 remainingQuantity
+                totalQuantity
+                lineItem {
+                  id
+                  title
+                  variantTitle
+                  sku
+                  originalUnitPriceSet {
+                    shopMoney { amount currencyCode }
+                  }
+                }
               }
             }
           }
@@ -89,6 +99,33 @@ async function getFulfillmentOrders(shopifyOrderId) {
   const globalId = `gid://shopify/Order/${shopifyOrderId}`;
   const data = await shopifyGraphQL(query, { id: globalId });
   return data.order?.fulfillmentOrders?.nodes || [];
+}
+
+/**
+ * Returns only OPEN fulfillment order line items for an order.
+ * Used by the supplier portal to show exactly what can be shipped —
+ * skipping ON_HOLD or CLOSED items (e.g. unpaid upsell lines).
+ */
+async function getFulfillableItems(shopifyOrderId) {
+  const fulfillmentOrders = await getFulfillmentOrders(shopifyOrderId);
+  const openOrders = fulfillmentOrders.filter(fo => fo.status === 'OPEN');
+
+  const items = [];
+  for (const fo of openOrders) {
+    for (const li of fo.lineItems.nodes) {
+      if (li.remainingQuantity <= 0) continue;
+      items.push({
+        title:    li.lineItem?.title   || '—',
+        variant:  li.lineItem?.variantTitle || null,
+        sku:      li.lineItem?.sku     || null,
+        quantity: li.remainingQuantity,
+        price:    li.lineItem?.originalUnitPriceSet?.shopMoney?.amount || null,
+        currency: li.lineItem?.originalUnitPriceSet?.shopMoney?.currencyCode || null,
+      });
+    }
+  }
+
+  return items;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -202,7 +239,7 @@ function buildTrackingUrl(carrier, trackingNumber) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function syncRecentOrders() {
-  const { createOrder, getOrderByShopifyId, logActivity } = require('../db/orders');
+  const { createOrder, getOrderByShopifyId, updateOrderStatus, updateFinancialStatus, logActivity } = require('../db/orders');
 
   console.log('[Sync] Initial order sync started');
 
@@ -223,10 +260,38 @@ async function syncRecentOrders() {
   console.log(`[Sync] Fetched ${orders.length} orders`);
 
   let inserted = 0;
-  for (const order of orders) {
-    const shopifyOrderId = String(order.id);
-    if (getOrderByShopifyId(shopifyOrderId)) continue; // already exists
+  let refreshed = 0;
 
+  for (const order of orders) {
+    const shopifyOrderId     = String(order.id);
+    const shopifyFinancial   = order.financial_status || 'pending';
+    const existing           = getOrderByShopifyId(shopifyOrderId);
+
+    if (existing) {
+      // Refresh financial_status for any existing order whose stored value
+      // differs from what Shopify currently reports. This fixes orders that
+      // were synced before the financial_status column existed and received
+      // the default 'pending' even though Shopify had them as partially_paid/paid.
+      if (existing.financial_status !== shopifyFinancial) {
+        updateFinancialStatus(existing.id, shopifyFinancial);
+        console.log(`[Sync] Refreshed financial_status for ${order.name}: ${existing.financial_status} → ${shopifyFinancial}`);
+
+        // Also advance workflow status if the order was stuck at pending
+        // but Shopify confirms payment has been received
+        if (existing.status === 'pending' &&
+            (shopifyFinancial === 'paid' || shopifyFinancial === 'partially_paid' || shopifyFinancial === 'authorized')) {
+          updateOrderStatus(existing.id, 'processing');
+          logActivity(existing.id, 'status_change',
+            `Status set to "processing" on startup sync (Shopify financial_status: ${shopifyFinancial})`);
+          console.log(`[Sync] Advanced ${order.name} to processing (${shopifyFinancial})`);
+        }
+
+        refreshed++;
+      }
+      continue;
+    }
+
+    // New order — insert it
     const shippingAddress = order.shipping_address || {};
     const billingAddress  = order.billing_address  || {};
     const address = Object.keys(shippingAddress).length ? shippingAddress : billingAddress;
@@ -256,7 +321,7 @@ async function syncRecentOrders() {
       line_items:         JSON.stringify(lineItems),
       total_price:        order.total_price      || '0.00',
       currency:           order.currency         || 'USD',
-      financial_status:   order.financial_status || 'pending',
+      financial_status:   shopifyFinancial,
       raw_payload:        JSON.stringify(order),
       shopify_created_at: order.created_at       || null,
     });
@@ -265,12 +330,13 @@ async function syncRecentOrders() {
     inserted++;
   }
 
-  console.log(`[Sync] Inserted ${inserted} new orders`);
+  console.log(`[Sync] Inserted ${inserted} new orders, refreshed ${refreshed} existing`);
 }
 
 module.exports = {
   shopifyGraphQL,
   getFulfillmentOrders,
+  getFulfillableItems,
   createFulfillment,
   syncRecentOrders,
 };

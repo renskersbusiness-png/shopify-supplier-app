@@ -9,7 +9,7 @@ const router  = express.Router();
 
 const { requireAuth } = require('../middleware/auth');
 const db = require('../db/orders');
-const { createFulfillment } = require('../shopify/client');
+const { createFulfillment, getFulfillableItems } = require('../shopify/client');
 
 // All API routes require login
 router.use(requireAuth);
@@ -55,6 +55,29 @@ router.get('/orders', (req, res) => {
   } catch (err) {
     console.error('[API] GET /orders error:', err);
     res.status(500).json({ error: 'Failed to fetch orders' });
+  }
+});
+
+// ── GET /api/orders/:id/fulfillable — OPEN fulfillment order items only ───────
+// Returns the line items from Shopify fulfillment orders with status=OPEN.
+// Used by the supplier portal for partially_paid orders so the supplier only
+// sees items that are actually ready/allowed to ship — not unpaid upsell items.
+
+router.get('/orders/:id/fulfillable', async (req, res) => {
+  try {
+    const order = db.getOrderById(req.params.id);
+    if (!order) return res.status(404).json({ error: 'Order not found' });
+
+    // Suppliers cannot inspect unpaid orders at all
+    if (req.session.role !== 'admin' && order.financial_status === 'pending') {
+      return res.status(403).json({ error: 'Order not yet confirmed as paid' });
+    }
+
+    const items = await getFulfillableItems(order.shopify_order_id);
+    res.json({ items });
+  } catch (err) {
+    console.error('[API] GET /orders/:id/fulfillable error:', err);
+    res.status(500).json({ error: err.message || 'Failed to fetch fulfillable items' });
   }
 });
 
@@ -129,6 +152,11 @@ router.patch('/orders/:id/tracking', (req, res) => {
 
     const order = db.getOrderById(req.params.id);
     if (!order) return res.status(404).json({ error: 'Order not found' });
+
+    // Suppliers cannot add tracking to unpaid orders
+    if (req.session.role !== 'admin' && order.financial_status === 'pending') {
+      return res.status(403).json({ error: 'Order not yet confirmed as paid' });
+    }
 
     db.updateTracking(order.id, { tracking_number, tracking_carrier, tracking_url });
     db.logActivity(
