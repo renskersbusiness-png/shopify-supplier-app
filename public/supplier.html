@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Supplier Portal</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f8fafc; color: #111827; font-size: 14px; line-height: 1.5; }
+    button { cursor: pointer; font-family: inherit; }
+
+    /* Top bar */
+    .topbar { background: #111827; color: white; padding: 14px 24px; display: flex; align-items: center; justify-content: space-between; }
+    .topbar-brand { font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+    .topbar-user  { font-size: 13px; color: #9ca3af; display: flex; align-items: center; gap: 12px; }
+
+    .content { max-width: 900px; margin: 0 auto; padding: 28px 20px; }
+
+    /* Stat row */
+    .stats-row { display: flex; gap: 12px; margin-bottom: 28px; flex-wrap: wrap; }
+    .stat-card { background: white; border: 1px solid #e5e7eb; border-radius: 10px; padding: 14px 20px; flex: 1; min-width: 120px; }
+    .stat-label { font-size: 11px; font-weight: 500; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.04em; }
+    .stat-value { font-size: 24px; font-weight: 700; color: #111827; margin-top: 2px; }
+
+    /* Filter tabs */
+    .filter-tabs { display: flex; gap: 4px; margin-bottom: 18px; background: white; border: 1px solid #e5e7eb; border-radius: 10px; padding: 6px; width: fit-content; }
+    .filter-tab { padding: 7px 16px; border-radius: 7px; font-size: 13px; font-weight: 500; border: none; background: none; color: #6b7280; transition: all 0.12s; }
+    .filter-tab:hover { background: #f3f4f6; }
+    .filter-tab.active { background: #6366f1; color: white; }
+
+    /* Order cards */
+    .order-card { background: white; border: 1px solid #e5e7eb; border-radius: 10px; margin-bottom: 14px; overflow: hidden; }
+    .order-card-header { padding: 14px 18px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #f3f4f6; cursor: pointer; user-select: none; }
+    .order-card-header:hover { background: #f9fafb; }
+    .order-num { font-weight: 700; font-size: 15px; }
+    .order-meta { font-size: 12px; color: #6b7280; margin-top: 2px; }
+    .order-card-body { padding: 18px; display: none; }
+    .order-card-body.open { display: block; }
+
+    /* Line items in order */
+    .item-row { display: flex; align-items: center; justify-content: space-between; padding: 10px; background: #f9fafb; border-radius: 8px; margin-bottom: 6px; }
+    .item-info { flex: 1; }
+    .item-title { font-weight: 500; }
+    .item-sub   { font-size: 12px; color: #9ca3af; }
+
+    /* Tracking form */
+    .tracking-form { border: 1px solid #e5e7eb; border-radius: 10px; padding: 16px; margin-top: 14px; background: white; }
+    .tracking-form h3 { font-size: 13px; font-weight: 600; margin-bottom: 12px; }
+    .form-row { display: flex; gap: 10px; margin-bottom: 10px; }
+    .form-group { flex: 1; }
+    .form-group label { display: block; font-size: 12px; font-weight: 500; color: #6b7280; margin-bottom: 4px; }
+    .form-group input, .form-group select {
+      width: 100%; padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px; outline: none; background: white;
+    }
+    .form-group input:focus, .form-group select:focus { border-color: #6366f1; }
+    .form-actions { display: flex; gap: 8px; margin-top: 4px; }
+
+    /* Buttons */
+    .btn { padding: 8px 16px; border-radius: 8px; font-size: 13px; font-weight: 500; border: 1px solid transparent; transition: all 0.12s; display: inline-flex; align-items: center; gap: 6px; }
+    .btn-primary { background: #6366f1; color: white; border-color: #6366f1; }
+    .btn-primary:hover { background: #4f46e5; }
+    .btn-success { background: #10b981; color: white; border-color: #10b981; }
+    .btn-success:hover { background: #059669; }
+    .btn-secondary { background: white; color: #374151; border-color: #d1d5db; }
+    .btn-secondary:hover { background: #f9fafb; }
+    .btn-sm { padding: 5px 10px; font-size: 12px; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    /* Badges */
+    .badge { display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 20px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; }
+    .badge::before { content: ''; width: 5px; height: 5px; border-radius: 50%; display: block; }
+    .badge-assigned      { background: #dbeafe; color: #2563eb; } .badge-assigned::before      { background: #2563eb; }
+    .badge-tracking_added{ background: #ede9fe; color: #7c3aed; } .badge-tracking_added::before{ background: #7c3aed; }
+    .badge-fulfilled     { background: #d1fae5; color: #059669; } .badge-fulfilled::before     { background: #059669; }
+    .badge-unassigned    { background: #f3f4f6; color: #6b7280; } .badge-unassigned::before    { background: #9ca3af; }
+
+    .info-box { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 10px 14px; font-size: 13px; color: #1e40af; margin-bottom: 14px; }
+    .success-box { background: #d1fae5; border: 1px solid #6ee7b7; border-radius: 8px; padding: 10px 14px; font-size: 13px; color: #065f46; margin-bottom: 14px; }
+    .warn-box { background: #fff7ed; border: 1px solid #fed7aa; border-radius: 8px; padding: 10px 14px; font-size: 13px; color: #9a3412; margin-bottom: 14px; }
+
+    /* Toast */
+    .toast { position: fixed; bottom: 28px; right: 28px; background: #111827; color: white; padding: 12px 18px; border-radius: 10px; font-size: 13px; font-weight: 500; z-index: 9999; opacity: 0; transform: translateY(8px); transition: opacity 0.2s, transform 0.2s; pointer-events: none; }
+    .toast.show { opacity: 1; transform: translateY(0); }
+    .toast.success { background: #065f46; }
+    .toast.error   { background: #7f1d1d; }
+
+    .empty { text-align: center; padding: 60px 20px; color: #9ca3af; }
+    .empty-icon { font-size: 40px; margin-bottom: 12px; }
+    .empty h3 { font-size: 15px; color: #6b7280; margin-bottom: 6px; }
+  </style>
+</head>
+<body>
+
+<!-- ── Top bar ────────────────────────────────────────────────────────────── -->
+<div class="topbar">
+  <div class="topbar-brand">📦 <span>Supplier Portal</span></div>
+  <div class="topbar-user">
+    <span id="supplier-name">Loading…</span>
+    <form method="POST" action="/logout" style="margin:0">
+      <button type="submit" style="background:none;border:none;color:#9ca3af;font-size:13px;cursor:pointer">Log out</button>
+    </form>
+  </div>
+</div>
+
+<div class="content">
+
+  <!-- Stats -->
+  <div class="stats-row" id="stats-row">
+    <div class="stat-card"><div class="stat-label">Assigned</div><div class="stat-value" id="stat-assigned">—</div></div>
+    <div class="stat-card"><div class="stat-label">Tracking Added</div><div class="stat-value" id="stat-tracking">—</div></div>
+    <div class="stat-card"><div class="stat-label">Fulfilled</div><div class="stat-value" id="stat-fulfilled">—</div></div>
+  </div>
+
+  <!-- Filter tabs -->
+  <div class="filter-tabs">
+    <button class="filter-tab active" onclick="setFilter('', this)">All</button>
+    <button class="filter-tab" onclick="setFilter('assigned', this)">To Do</button>
+    <button class="filter-tab" onclick="setFilter('tracking_added', this)">Tracking Added</button>
+    <button class="filter-tab" onclick="setFilter('fulfilled', this)">Fulfilled</button>
+  </div>
+
+  <!-- Orders list -->
+  <div id="orders-list">
+    <div style="text-align:center;padding:40px;color:#9ca3af">Loading…</div>
+  </div>
+
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+let currentFilter = '';
+// Map of order_id → tracking form state
+const trackingState = {};
+
+document.addEventListener('DOMContentLoaded', async () => {
+  await loadMe();
+  await loadAssignments();
+});
+
+async function api(url, opts = {}) {
+  const res = await fetch(url, { headers: { 'Content-Type': 'application/json' }, ...opts });
+  if (res.status === 401) { window.location.href = '/login'; throw new Error('Unauthenticated'); }
+  const json = await res.json();
+  if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+  return json;
+}
+
+function toast(msg, type = '') {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className   = 'toast show' + (type ? ' ' + type : '');
+  clearTimeout(el._t);
+  el._t = setTimeout(() => el.classList.remove('show'), 3500);
+}
+
+function esc(s) { return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function statusBadge(s) { return `<span class="badge badge-${esc(s)}">${esc(s.replace('_',' '))}</span>`; }
+function fmtDate(d) { if (!d) return ''; return new Date(d).toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'}); }
+
+async function loadMe() {
+  try {
+    const r = await api('/api/supplier/me');
+    document.getElementById('supplier-name').textContent = r.supplierName || 'Supplier';
+  } catch(e) {}
+}
+
+async function loadAssignments() {
+  const list = document.getElementById('orders-list');
+  list.innerHTML = '<div style="text-align:center;padding:40px;color:#9ca3af">Loading…</div>';
+  try {
+    const params = new URLSearchParams();
+    if (currentFilter) params.set('status', currentFilter);
+    const r = await api(`/api/supplier/assignments?${params}`);
+    const stats = r.stats || {};
+    document.getElementById('stat-assigned').textContent  = stats.assigned  || 0;
+    document.getElementById('stat-tracking').textContent  = stats.tracking_added || 0;
+    document.getElementById('stat-fulfilled').textContent = stats.fulfilled  || 0;
+
+    const rows = r.assignments || [];
+    if (!rows.length) {
+      list.innerHTML = `<div class="empty"><div class="empty-icon">📦</div><h3>${currentFilter ? 'No items in this category' : 'No items assigned yet'}</h3><p style="font-size:13px">Items appear here when assigned to you for fulfillment.</p></div>`;
+      return;
+    }
+
+    // Group by order
+    const orderMap = new Map();
+    for (const a of rows) {
+      if (!orderMap.has(a.order_id)) {
+        orderMap.set(a.order_id, {
+          order_id:        a.order_id,
+          shopify_order_num: a.shopify_order_num,
+          customer_name:   a.customer_name,
+          created_at:      a.order_created_at,
+          items:           [],
+        });
+      }
+      orderMap.get(a.order_id).items.push(a);
+    }
+
+    list.innerHTML = [...orderMap.values()].map(group => renderOrderCard(group)).join('');
+  } catch(e) {
+    list.innerHTML = `<div style="color:#ef4444;padding:20px;text-align:center">Error: ${esc(e.message)}</div>`;
+  }
+}
+
+function renderOrderCard(group) {
+  const items      = group.items;
+  const allStatuses = [...new Set(items.map(i => i.status))];
+  const hasTracking = items[0]?.tracking_number;
+  const isFulfilled = items.every(i => i.status === 'fulfilled');
+
+  // Pre-fill tracking state
+  if (!trackingState[group.order_id]) {
+    trackingState[group.order_id] = {
+      number:  items[0]?.tracking_number  || '',
+      carrier: items[0]?.tracking_carrier || '',
+      url:     items[0]?.tracking_url     || '',
+    };
+  }
+  const ts = trackingState[group.order_id];
+
+  const itemRows = items.map(a => `
+    <div class="item-row">
+      <div class="item-info">
+        <div class="item-title">${esc(a.title)}${a.variant_title ? ` <span style="color:#9ca3af;font-size:12px">— ${esc(a.variant_title)}</span>` : ''}</div>
+        <div class="item-sub">SKU: ${esc(a.sku||'—')} · Qty: ${a.quantity}</div>
+      </div>
+      ${statusBadge(a.status)}
+    </div>
+  `).join('');
+
+  const trackingSection = isFulfilled ? `
+    <div class="success-box" style="margin-top:14px">
+      ✅ Fulfilled — <strong>${esc(items[0]?.tracking_carrier||'')}</strong> ${esc(items[0]?.tracking_number||'')}
+      ${items[0]?.tracking_url ? `<a href="${esc(items[0].tracking_url)}" target="_blank" style="color:#065f46;margin-left:8px">Track →</a>` : ''}
+    </div>
+  ` : `
+    <div class="tracking-form" id="tracking-form-${group.order_id}">
+      <h3>📦 Tracking Information</h3>
+      ${hasTracking ? `<div class="success-box">Tracking saved — <strong>${esc(ts.carrier)}</strong> ${esc(ts.number)}</div>` : ''}
+      <div class="form-row">
+        <div class="form-group">
+          <label>Carrier *</label>
+          <select id="carrier-${group.order_id}" onchange="trackingState[${group.order_id}].carrier=this.value">
+            <option value="">Select carrier…</option>
+            ${['DHL','FedEx','UPS','USPS','ePacket','China Post','SF Express','Cainiao','Yanwen','4PX','Other'].map(c =>
+              `<option value="${c}"${ts.carrier===c?' selected':''}>${c}</option>`
+            ).join('')}
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Tracking Number *</label>
+          <input type="text" id="tn-${group.order_id}" value="${esc(ts.number)}" placeholder="e.g. 1Z999AA10123456784" oninput="trackingState[${group.order_id}].number=this.value">
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Tracking URL <span style="color:#9ca3af">(optional)</span></label>
+        <input type="url" id="tu-${group.order_id}" value="${esc(ts.url)}" placeholder="https://track.carrier.com/…" oninput="trackingState[${group.order_id}].url=this.value">
+      </div>
+      <div class="form-actions">
+        <button class="btn btn-primary btn-sm" onclick="saveTracking(${group.order_id}, this)">
+          ${hasTracking ? 'Update Tracking' : 'Save Tracking'}
+        </button>
+        ${hasTracking ? `
+          <button class="btn btn-success btn-sm" onclick="fulfillOrder(${group.order_id}, this)">
+            ✅ Mark as Shipped in Shopify
+          </button>` : ''}
+      </div>
+    </div>
+  `;
+
+  return `
+    <div class="order-card">
+      <div class="order-card-header" onclick="toggleOrder(${group.order_id})">
+        <div>
+          <div class="order-num">${esc(group.shopify_order_num)}</div>
+          <div class="order-meta">${esc(group.customer_name||'—')} · ${items.length} item(s) · ${fmtDate(group.created_at)}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          ${isFulfilled ? '<span class="badge badge-fulfilled">Fulfilled</span>' : (hasTracking ? '<span class="badge badge-tracking_added">Tracking Added</span>' : '<span class="badge badge-assigned">Action needed</span>')}
+          <span style="color:#9ca3af;font-size:16px" id="chevron-${group.order_id}">▼</span>
+        </div>
+      </div>
+      <div class="order-card-body" id="order-body-${group.order_id}">
+        ${itemRows}
+        ${trackingSection}
+      </div>
+    </div>
+  `;
+}
+
+function toggleOrder(orderId) {
+  const body    = document.getElementById('order-body-' + orderId);
+  const chevron = document.getElementById('chevron-' + orderId);
+  const isOpen  = body.classList.toggle('open');
+  chevron.textContent = isOpen ? '▲' : '▼';
+}
+
+function setFilter(status, btn) {
+  currentFilter = status;
+  document.querySelectorAll('.filter-tab').forEach(el => el.classList.remove('active'));
+  btn.classList.add('active');
+  loadAssignments();
+}
+
+async function saveTracking(orderId, btn) {
+  const ts = trackingState[orderId];
+  if (!ts.number?.trim() || !ts.carrier) {
+    toast('Carrier and tracking number are required', 'error');
+    return;
+  }
+  btn.disabled = true;
+  const orig   = btn.textContent;
+  btn.textContent = 'Saving…';
+  try {
+    await api('/api/supplier/tracking', {
+      method: 'PATCH',
+      body: JSON.stringify({
+        order_id:         orderId,
+        tracking_number:  ts.number.trim(),
+        tracking_carrier: ts.carrier,
+        tracking_url:     ts.url?.trim() || null,
+      }),
+    });
+    toast('Tracking saved!', 'success');
+    await loadAssignments();
+  } catch(e) {
+    toast(e.message, 'error');
+  } finally {
+    btn.disabled    = false;
+    btn.textContent = orig;
+  }
+}
+
+async function fulfillOrder(orderId, btn) {
+  if (!confirm('Submit this shipment to Shopify? The customer will receive a shipping notification email.')) return;
+  btn.disabled    = true;
+  btn.textContent = 'Submitting…';
+  try {
+    await api('/api/supplier/fulfill', {
+      method: 'POST',
+      body: JSON.stringify({ order_id: orderId }),
+    });
+    toast('Order fulfilled! Customer notified.', 'success');
+    await loadAssignments();
+  } catch(e) {
+    toast(e.message, 'error');
+  } finally {
+    btn.disabled    = false;
+    btn.textContent = '✅ Mark as Shipped in Shopify';
+  }
+}
+</script>
+</body>
+</html>

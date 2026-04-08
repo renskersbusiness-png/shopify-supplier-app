@@ -1,0 +1,1006 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Fulfillment Admin</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f8fafc; color: #111827; font-size: 14px; line-height: 1.5; }
+    a { text-decoration: none; color: inherit; }
+    button { cursor: pointer; font-family: inherit; }
+
+    /* Sidebar */
+    .sidebar { position: fixed; top: 0; left: 0; bottom: 0; width: 220px; background: #111827; color: #e5e7eb; display: flex; flex-direction: column; z-index: 10; }
+    .sidebar-logo { padding: 20px 20px 16px; font-size: 15px; font-weight: 600; color: #fff; border-bottom: 1px solid #1f2937; display: flex; align-items: center; gap: 8px; }
+    .sidebar-nav { flex: 1; padding: 12px 8px; }
+    .nav-item { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 8px; font-size: 13px; color: #9ca3af; cursor: pointer; transition: background 0.12s, color 0.12s; margin-bottom: 2px; border: none; background: none; width: 100%; text-align: left; }
+    .nav-item:hover { background: #1f2937; color: #e5e7eb; }
+    .nav-item.active { background: #6366f1; color: #fff; }
+    .nav-item .icon { font-size: 15px; width: 18px; text-align: center; }
+    .sidebar-footer { padding: 12px 8px; border-top: 1px solid #1f2937; }
+    .main { margin-left: 220px; min-height: 100vh; }
+    .topbar { background: white; border-bottom: 1px solid #e5e7eb; padding: 16px 28px; display: flex; align-items: center; gap: 16px; position: sticky; top: 0; z-index: 5; }
+    .topbar-title { font-size: 17px; font-weight: 600; flex: 1; }
+    .content { padding: 24px 28px; }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+
+    /* Buttons */
+    .btn { padding: 8px 16px; border-radius: 8px; font-size: 13px; font-weight: 500; border: 1px solid transparent; transition: all 0.12s; display: inline-flex; align-items: center; gap: 6px; }
+    .btn-primary   { background: #6366f1; color: white; border-color: #6366f1; }
+    .btn-primary:hover   { background: #4f46e5; }
+    .btn-secondary { background: white; color: #374151; border-color: #d1d5db; }
+    .btn-secondary:hover { background: #f9fafb; }
+    .btn-success { background: #10b981; color: white; border-color: #10b981; }
+    .btn-success:hover { background: #059669; }
+    .btn-danger  { background: #ef4444; color: white; border-color: #ef4444; }
+    .btn-danger:hover  { background: #dc2626; }
+    .btn-warning { background: #f59e0b; color: white; border-color: #f59e0b; }
+    .btn-warning:hover { background: #d97706; }
+    .btn-sm { padding: 5px 10px; font-size: 12px; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    /* Stats grid */
+    .stats-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 14px; margin-bottom: 24px; }
+    .stat-card { background: white; border: 1px solid #e5e7eb; border-radius: 10px; padding: 16px 18px; cursor: pointer; transition: border-color 0.15s; }
+    .stat-card:hover { border-color: #6366f1; }
+    .stat-label { font-size: 11px; font-weight: 500; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.04em; }
+    .stat-value { font-size: 26px; font-weight: 700; color: #111827; margin-top: 4px; }
+
+    /* Toolbar */
+    .toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
+    .search-wrap { position: relative; flex: 1; min-width: 200px; max-width: 320px; }
+    .search-wrap input { width: 100%; padding: 8px 12px 8px 34px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 13px; outline: none; background: white; }
+    .search-wrap input:focus { border-color: #6366f1; }
+    .search-icon { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: #9ca3af; font-size: 14px; }
+
+    /* Table */
+    .table-wrap { background: white; border: 1px solid #e5e7eb; border-radius: 10px; overflow: hidden; }
+    table { width: 100%; border-collapse: collapse; }
+    thead { background: #f9fafb; }
+    th { padding: 11px 16px; text-align: left; font-size: 11px; font-weight: 600; color: #6b7280; text-transform: uppercase; letter-spacing: 0.04em; border-bottom: 1px solid #e5e7eb; white-space: nowrap; }
+    td { padding: 13px 16px; border-bottom: 1px solid #f3f4f6; vertical-align: middle; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: #f9fafb; }
+    .pagination { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; border-top: 1px solid #f3f4f6; }
+    .pagination-info { font-size: 12px; color: #6b7280; }
+    .pagination-btns { display: flex; gap: 6px; }
+
+    /* Badges */
+    .badge { display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 20px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; }
+    .badge::before { content: ''; width: 5px; height: 5px; border-radius: 50%; display: block; }
+    .badge-pending    { background: #fef3c7; color: #d97706; } .badge-pending::before    { background: #d97706; }
+    .badge-processing { background: #dbeafe; color: #2563eb; } .badge-processing::before { background: #2563eb; }
+    .badge-shipped    { background: #ede9fe; color: #7c3aed; } .badge-shipped::before    { background: #7c3aed; }
+    .badge-fulfilled  { background: #d1fae5; color: #059669; } .badge-fulfilled::before  { background: #059669; }
+    .badge-assigned   { background: #dbeafe; color: #1d4ed8; } .badge-assigned::before   { background: #1d4ed8; }
+    .badge-unassigned { background: #f3f4f6; color: #6b7280; } .badge-unassigned::before { background: #9ca3af; }
+    .badge-tracking_added { background: #ede9fe; color: #7c3aed; } .badge-tracking_added::before { background: #7c3aed; }
+    .badge-partial    { background: #fff7ed; color: #c2410c; } .badge-partial::before    { background: #c2410c; }
+    .badge-refunded   { background: #f3f4f6; color: #6b7280; } .badge-refunded::before   { background: #6b7280; }
+    .badge-active   { background: #d1fae5; color: #059669; } .badge-active::before { background: #059669; }
+    .badge-inactive { background: #f3f4f6; color: #9ca3af; } .badge-inactive::before { background: #9ca3af; }
+
+    /* Action pills */
+    .action-pill { display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+    .action-waiting  { background: #fefce8; color: #a16207; border: 1px solid #fef08a; }
+    .action-tracking { background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; }
+    .action-fulfill  { background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0; }
+    .action-done     { background: #f9fafb; color: #9ca3af; border: 1px solid #e5e7eb; }
+
+    /* Modal / slide panel */
+    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 100; display: flex; align-items: flex-start; justify-content: flex-end; opacity: 0; pointer-events: none; transition: opacity 0.2s; }
+    .modal-overlay.open { opacity: 1; pointer-events: all; }
+    .modal-panel { background: white; width: 540px; height: 100vh; overflow-y: auto; box-shadow: -8px 0 40px rgba(0,0,0,0.15); transform: translateX(100%); transition: transform 0.25s cubic-bezier(0.32,0.72,0,1); }
+    .modal-overlay.open .modal-panel { transform: translateX(0); }
+    .modal-header { padding: 20px 24px 16px; border-bottom: 1px solid #e5e7eb; display: flex; align-items: center; gap: 12px; position: sticky; top: 0; background: white; z-index: 2; }
+    .modal-header h2 { font-size: 16px; font-weight: 600; flex: 1; }
+    .modal-close { width: 32px; height: 32px; border-radius: 8px; background: #f3f4f6; border: none; font-size: 18px; color: #6b7280; display: flex; align-items: center; justify-content: center; }
+    .modal-close:hover { background: #e5e7eb; }
+    .modal-body { padding: 20px 24px; }
+
+    /* Dialog (centered overlay) */
+    .dialog-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 200; display: flex; align-items: center; justify-content: center; opacity: 0; pointer-events: none; transition: opacity 0.15s; }
+    .dialog-backdrop.open { opacity: 1; pointer-events: all; }
+    .dialog { background: white; border-radius: 12px; padding: 28px; width: 440px; max-width: 95vw; box-shadow: 0 20px 60px rgba(0,0,0,0.2); transform: scale(0.95); transition: transform 0.15s; }
+    .dialog-backdrop.open .dialog { transform: scale(1); }
+    .dialog h3 { font-size: 16px; font-weight: 600; margin-bottom: 16px; }
+    .dialog-footer { display: flex; gap: 8px; justify-content: flex-end; margin-top: 20px; }
+
+    /* Forms */
+    .form-group { margin-bottom: 14px; }
+    .form-group label { display: block; font-size: 12px; font-weight: 500; color: #374151; margin-bottom: 5px; }
+    .form-group input, .form-group select, .form-group textarea {
+      width: 100%; padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px; outline: none; font-family: inherit; background: white;
+    }
+    .form-group input:focus, .form-group select:focus, .form-group textarea:focus { border-color: #6366f1; }
+    .form-row { display: flex; gap: 10px; }
+    .form-row .form-group { flex: 1; }
+
+    /* Section + field layout */
+    .section { margin-bottom: 22px; }
+    .section-title { font-size: 11px; font-weight: 600; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 10px; }
+    .field-row { display: flex; gap: 8px; align-items: flex-start; padding: 6px 0; border-bottom: 1px solid #f3f4f6; }
+    .field-row:last-child { border-bottom: none; }
+    .field-label { color: #6b7280; min-width: 120px; font-size: 13px; }
+    .field-value { color: #111827; font-size: 13px; font-weight: 500; flex: 1; word-break: break-all; }
+
+    .line-item-row { display: flex; justify-content: space-between; align-items: center; padding: 7px 10px; background: #f9fafb; border-radius: 6px; margin-bottom: 4px; font-size: 13px; }
+    .li-supplier-tag { font-size: 11px; padding: 2px 7px; border-radius: 12px; background: #dbeafe; color: #1d4ed8; font-weight: 500; }
+
+    .activity-log { margin-top: 4px; }
+    .log-entry { display: flex; gap: 10px; align-items: flex-start; padding: 8px 0; border-bottom: 1px solid #f3f4f6; }
+    .log-dot { width: 8px; height: 8px; border-radius: 50%; background: #d1d5db; margin-top: 5px; flex-shrink: 0; }
+    .log-entry.fulfilled .log-dot { background: #10b981; }
+    .log-entry.tracking_added .log-dot { background: #8b5cf6; }
+    .log-entry.status_change .log-dot { background: #3b82f6; }
+    .log-entry.assignment .log-dot { background: #f59e0b; }
+    .log-text { font-size: 12px; color: #374151; }
+    .log-time { font-size: 11px; color: #9ca3af; display: block; margin-top: 2px; }
+
+    .action-bar { display: flex; gap: 8px; flex-wrap: wrap; padding: 14px 0; border-top: 1px solid #e5e7eb; border-bottom: 1px solid #e5e7eb; margin-bottom: 18px; }
+    .tracking-form { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 10px; padding: 16px; margin-bottom: 18px; }
+    .tracking-form h3 { font-size: 13px; font-weight: 600; margin-bottom: 12px; }
+
+    .info-box { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 10px 14px; font-size: 13px; color: #1e40af; margin-bottom: 14px; }
+    .warn-box  { background: #fff7ed; border: 1px solid #fed7aa; border-radius: 8px; padding: 10px 14px; font-size: 13px; color: #9a3412; margin-bottom: 14px; }
+
+    /* Token / link box */
+    .token-box { display: flex; align-items: center; gap: 8px; background: #f3f4f6; border-radius: 8px; padding: 8px 12px; font-size: 12px; font-family: monospace; overflow: hidden; }
+    .token-box span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    /* Toast */
+    .toast { position: fixed; bottom: 28px; right: 28px; background: #111827; color: white; padding: 12px 18px; border-radius: 10px; font-size: 13px; font-weight: 500; z-index: 9999; opacity: 0; transform: translateY(8px); transition: opacity 0.2s, transform 0.2s; pointer-events: none; }
+    .toast.show { opacity: 1; transform: translateY(0); }
+    .toast.success { background: #065f46; }
+    .toast.error   { background: #7f1d1d; }
+
+    .empty { text-align: center; padding: 60px 20px; color: #9ca3af; }
+    .empty-icon { font-size: 40px; margin-bottom: 12px; }
+    .empty h3 { font-size: 15px; font-weight: 500; color: #6b7280; margin-bottom: 6px; }
+
+    .supplier-card { background: white; border: 1px solid #e5e7eb; border-radius: 10px; padding: 18px; margin-bottom: 12px; }
+    .supplier-card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+    .supplier-name { font-size: 15px; font-weight: 600; }
+    .supplier-meta { font-size: 12px; color: #6b7280; margin-bottom: 10px; }
+    .supplier-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+
+    @media (max-width: 900px) {
+      .sidebar { width: 60px; }
+      .nav-item span:not(.icon), .sidebar-logo > span:last-child { display: none; }
+      .main { margin-left: 60px; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── Sidebar ─────────────────────────────────────────────────────────────── -->
+<aside class="sidebar">
+  <div class="sidebar-logo">
+    <span>📦</span>
+    <span>Fulfillment Admin</span>
+  </div>
+  <nav class="sidebar-nav">
+    <button class="nav-item active" onclick="showTab('orders', this)">
+      <span class="icon">🗂</span><span>Orders</span>
+    </button>
+    <button class="nav-item" onclick="showTab('suppliers', this)">
+      <span class="icon">🏭</span><span>Suppliers</span>
+    </button>
+    <button class="nav-item" onclick="showTab('rules', this)">
+      <span class="icon">⚙️</span><span>Rules</span>
+    </button>
+    <button class="nav-item" onclick="showTab('assignments', this)">
+      <span class="icon">📋</span><span>Assignments</span>
+    </button>
+  </nav>
+  <div class="sidebar-footer">
+    <form method="POST" action="/logout" style="margin:0">
+      <button type="submit" class="nav-item" style="width:100%">
+        <span class="icon">🚪</span><span>Log out</span>
+      </button>
+    </form>
+  </div>
+</aside>
+
+<!-- ── Main ───────────────────────────────────────────────────────────────── -->
+<main class="main">
+  <div class="topbar">
+    <div class="topbar-title" id="page-title">Orders</div>
+    <button class="btn btn-secondary btn-sm" onclick="refreshTab()">↻ Refresh</button>
+  </div>
+
+  <div class="content">
+
+    <!-- ── ORDERS TAB ──────────────────────────────────────────────────────── -->
+    <div id="tab-orders" class="tab-content active">
+      <div class="stats-grid" id="order-stats"></div>
+
+      <div class="toolbar">
+        <div class="search-wrap">
+          <span class="search-icon">🔍</span>
+          <input type="text" id="order-search" placeholder="Search orders, customers…" oninput="handleOrderSearch(this.value)">
+        </div>
+        <select id="order-status-filter" onchange="ordersPage=1;loadOrders()" style="padding:8px 10px;border:1px solid #d1d5db;border-radius:8px;font-size:13px;background:white;outline:none">
+          <option value="">All statuses</option>
+          <option value="pending">Pending</option>
+          <option value="processing">Processing</option>
+          <option value="shipped">Shipped</option>
+          <option value="fulfilled">Fulfilled</option>
+        </select>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Order</th>
+              <th>Customer</th>
+              <th>Items</th>
+              <th>Total</th>
+              <th>Status</th>
+              <th>Payment</th>
+              <th>Date</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="orders-tbody">
+            <tr><td colspan="8" style="text-align:center;padding:40px;color:#9ca3af">Loading…</td></tr>
+          </tbody>
+        </table>
+        <div class="pagination" id="orders-pagination" style="display:none">
+          <span class="pagination-info" id="orders-pagination-info"></span>
+          <div class="pagination-btns">
+            <button class="btn btn-secondary btn-sm" id="orders-prev" onclick="ordersPage--;loadOrders()">← Prev</button>
+            <button class="btn btn-secondary btn-sm" id="orders-next" onclick="ordersPage++;loadOrders()">Next →</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── SUPPLIERS TAB ───────────────────────────────────────────────────── -->
+    <div id="tab-suppliers" class="tab-content">
+      <div class="toolbar">
+        <button class="btn btn-primary" onclick="openSupplierDialog()">+ Add Supplier</button>
+      </div>
+      <div id="suppliers-list">
+        <div style="text-align:center;padding:40px;color:#9ca3af">Loading…</div>
+      </div>
+    </div>
+
+    <!-- ── RULES TAB ───────────────────────────────────────────────────────── -->
+    <div id="tab-rules" class="tab-content">
+      <div class="info-box">
+        Rules match incoming order line items to suppliers automatically. Lower priority number = higher priority. First matching rule wins.
+      </div>
+      <div class="toolbar">
+        <button class="btn btn-primary" onclick="openRuleDialog()">+ Add Rule</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Priority</th>
+              <th>Type</th>
+              <th>Value</th>
+              <th>Supplier</th>
+              <th>Status</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="rules-tbody">
+            <tr><td colspan="6" style="text-align:center;padding:40px;color:#9ca3af">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ── ASSIGNMENTS TAB ─────────────────────────────────────────────────── -->
+    <div id="tab-assignments" class="tab-content">
+      <div class="toolbar">
+        <select id="asg-supplier-filter" onchange="asgPage=1;loadAssignments()" style="padding:8px 10px;border:1px solid #d1d5db;border-radius:8px;font-size:13px;background:white;outline:none">
+          <option value="">All suppliers</option>
+        </select>
+        <select id="asg-status-filter" onchange="asgPage=1;loadAssignments()" style="padding:8px 10px;border:1px solid #d1d5db;border-radius:8px;font-size:13px;background:white;outline:none">
+          <option value="">All statuses</option>
+          <option value="unassigned">Unassigned</option>
+          <option value="assigned">Assigned</option>
+          <option value="tracking_added">Tracking Added</option>
+          <option value="fulfilled">Fulfilled</option>
+        </select>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Order</th>
+              <th>Product</th>
+              <th>SKU</th>
+              <th>Qty</th>
+              <th>Supplier</th>
+              <th>Status</th>
+              <th>Tracking</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="assignments-tbody">
+            <tr><td colspan="8" style="text-align:center;padding:40px;color:#9ca3af">Loading…</td></tr>
+          </tbody>
+        </table>
+        <div class="pagination" id="asg-pagination" style="display:none">
+          <span class="pagination-info" id="asg-pagination-info"></span>
+          <div class="pagination-btns">
+            <button class="btn btn-secondary btn-sm" id="asg-prev" onclick="asgPage--;loadAssignments()">← Prev</button>
+            <button class="btn btn-secondary btn-sm" id="asg-next" onclick="asgPage++;loadAssignments()">Next →</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /content -->
+</main>
+
+<!-- ── Order Detail Panel ─────────────────────────────────────────────────── -->
+<div class="modal-overlay" id="order-modal" onclick="if(event.target===this)closeOrderModal()">
+  <div class="modal-panel">
+    <div class="modal-header">
+      <h2 id="modal-title">Order</h2>
+      <button class="modal-close" onclick="closeOrderModal()">✕</button>
+    </div>
+    <div class="modal-body" id="modal-body">Loading…</div>
+  </div>
+</div>
+
+<!-- ── Supplier Dialog ───────────────────────────────────────────────────── -->
+<div class="dialog-backdrop" id="supplier-dialog" onclick="if(event.target===this)closeSupplierDialog()">
+  <div class="dialog">
+    <h3 id="supplier-dialog-title">Add Supplier</h3>
+    <div class="form-group">
+      <label>Name *</label>
+      <input type="text" id="supp-name" placeholder="e.g. Acme Logistics">
+    </div>
+    <div class="form-group">
+      <label>Email *</label>
+      <input type="email" id="supp-email" placeholder="supplier@example.com">
+    </div>
+    <div class="form-group">
+      <label>Notes</label>
+      <textarea id="supp-notes" rows="2" placeholder="Internal notes…"></textarea>
+    </div>
+    <div class="dialog-footer">
+      <button class="btn btn-secondary" onclick="closeSupplierDialog()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveSupplier()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Rule Dialog ────────────────────────────────────────────────────────── -->
+<div class="dialog-backdrop" id="rule-dialog" onclick="if(event.target===this)closeRuleDialog()">
+  <div class="dialog">
+    <h3 id="rule-dialog-title">Add Rule</h3>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Type *</label>
+        <select id="rule-type">
+          <option value="sku">SKU</option>
+          <option value="vendor">Vendor</option>
+          <option value="product_id">Product ID</option>
+          <option value="order_tag">Order Tag</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Value *</label>
+        <input type="text" id="rule-value" placeholder="e.g. MY-SKU-001">
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Supplier *</label>
+        <select id="rule-supplier"></select>
+      </div>
+      <div class="form-group">
+        <label>Priority <span style="color:#9ca3af">(lower = higher priority)</span></label>
+        <input type="number" id="rule-priority" value="100" min="1">
+      </div>
+    </div>
+    <div class="dialog-footer">
+      <button class="btn btn-secondary" onclick="closeRuleDialog()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveRule()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Reassign Dialog ────────────────────────────────────────────────────── -->
+<div class="dialog-backdrop" id="reassign-dialog" onclick="if(event.target===this)closeReassignDialog()">
+  <div class="dialog">
+    <h3>Reassign Line Item</h3>
+    <p style="font-size:13px;color:#6b7280;margin-bottom:16px" id="reassign-item-label"></p>
+    <div class="form-group">
+      <label>Supplier</label>
+      <select id="reassign-supplier">
+        <option value="">— Unassigned —</option>
+      </select>
+    </div>
+    <div class="dialog-footer">
+      <button class="btn btn-secondary" onclick="closeReassignDialog()">Cancel</button>
+      <button class="btn btn-primary" onclick="confirmReassign()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Toast ─────────────────────────────────────────────────────────────── -->
+<div class="toast" id="toast"></div>
+
+<script>
+// ─── State ────────────────────────────────────────────────────────────────────
+let ordersPage = 1, ordersSearchTimer = null;
+let asgPage    = 1;
+let currentTab = 'orders';
+let suppliers  = [];          // cache for select dropdowns
+let editingSupplier = null;   // id of supplier being edited
+let editingRule     = null;   // id of rule being edited
+let reassignId      = null;   // assignment id being reassigned
+
+// ─── Init ────────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', async () => {
+  await loadSuppliersCache();
+  loadStats();
+  loadOrders();
+  setInterval(() => { if (currentTab === 'orders') { loadStats(); loadOrders(); } }, 60_000);
+});
+
+// ─── Tab navigation ───────────────────────────────────────────────────────────
+function showTab(tab, btn) {
+  currentTab = tab;
+  document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+  document.getElementById('tab-' + tab).classList.add('active');
+  btn.classList.add('active');
+  const titles = { orders: 'Orders', suppliers: 'Suppliers', rules: 'Assignment Rules', assignments: 'Line Item Assignments' };
+  document.getElementById('page-title').textContent = titles[tab] || tab;
+  refreshTab();
+}
+
+function refreshTab() {
+  if (currentTab === 'orders')      { loadStats(); loadOrders(); }
+  if (currentTab === 'suppliers')   loadSuppliers();
+  if (currentTab === 'rules')       loadRules();
+  if (currentTab === 'assignments') loadAssignments();
+}
+
+// ─── API helper ───────────────────────────────────────────────────────────────
+async function api(url, opts = {}) {
+  const res = await fetch(url, { headers: { 'Content-Type': 'application/json' }, ...opts });
+  if (res.status === 401) { window.location.href = '/login'; throw new Error('Unauthenticated'); }
+  const json = await res.json();
+  if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+  return json;
+}
+
+function toast(msg, type = '') {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className   = 'toast show' + (type ? ' ' + type : '');
+  clearTimeout(el._t);
+  el._t = setTimeout(() => el.classList.remove('show'), 3000);
+}
+
+function esc(s) { return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function statusBadge(s)   { return `<span class="badge badge-${esc(s)}">${esc(s)}</span>`; }
+function paymentBadge(s)  {
+  if (!s || s === 'paid') return '';
+  const labels = { pending: 'Unpaid', partially_paid: 'Partial', refunded: 'Refunded', voided: 'Voided', authorized: 'Authorized' };
+  return `<span class="badge badge-${s === 'partially_paid' ? 'partial' : s === 'pending' ? 'pending' : 'refunded'}" style="margin-left:4px">${labels[s]||s}</span>`;
+}
+function formatDate(d) { if (!d) return '—'; return new Date(d).toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'}); }
+function formatItems(items) {
+  if (!items || !items.length) return '—';
+  if (items.length === 1) return `<span title="${esc(items[0].title)}">${esc(items[0].title.substring(0,28))} ×${items[0].quantity}</span>`;
+  return `<span title="${items.map(i=>i.title+'×'+i.quantity).join(', ')}">${items.length} items</span>`;
+}
+
+// ─── Suppliers cache ──────────────────────────────────────────────────────────
+async function loadSuppliersCache() {
+  try {
+    const r = await api('/api/suppliers');
+    suppliers = r.suppliers || [];
+    populateSupplierSelects();
+  } catch(e) { console.error('Could not load suppliers:', e); }
+}
+
+function populateSupplierSelects() {
+  const opts = suppliers.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
+  const ruleSupp = document.getElementById('rule-supplier');
+  if (ruleSupp) ruleSupp.innerHTML = opts || '<option value="">No suppliers yet</option>';
+
+  // Assignment filter
+  const asgFilter = document.getElementById('asg-supplier-filter');
+  if (asgFilter) {
+    asgFilter.innerHTML = '<option value="">All suppliers</option>' + opts;
+  }
+
+  // Reassign dialog
+  const reassignSel = document.getElementById('reassign-supplier');
+  if (reassignSel) {
+    reassignSel.innerHTML = '<option value="">— Unassigned —</option>' + opts;
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ORDERS TAB
+// ══════════════════════════════════════════════════════════════════════════════
+
+async function loadStats() {
+  try {
+    const r = await api('/api/stats');
+    const o = r.orders || {};
+    document.getElementById('order-stats').innerHTML = `
+      <div class="stat-card" onclick="document.getElementById('order-status-filter').value='';ordersPage=1;loadOrders()">
+        <div class="stat-label">Total</div><div class="stat-value">${o.total||0}</div>
+      </div>
+      <div class="stat-card" onclick="document.getElementById('order-status-filter').value='pending';ordersPage=1;loadOrders()">
+        <div class="stat-label" style="color:#d97706">Unpaid</div><div class="stat-value" style="color:#d97706">${o.pending||0}</div>
+      </div>
+      <div class="stat-card" onclick="document.getElementById('order-status-filter').value='processing';ordersPage=1;loadOrders()">
+        <div class="stat-label" style="color:#2563eb">Processing</div><div class="stat-value" style="color:#2563eb">${o.processing||0}</div>
+      </div>
+      <div class="stat-card" onclick="document.getElementById('order-status-filter').value='shipped';ordersPage=1;loadOrders()">
+        <div class="stat-label" style="color:#7c3aed">Shipped</div><div class="stat-value" style="color:#7c3aed">${o.shipped||0}</div>
+      </div>
+      <div class="stat-card" onclick="document.getElementById('order-status-filter').value='fulfilled';ordersPage=1;loadOrders()">
+        <div class="stat-label" style="color:#059669">Fulfilled</div><div class="stat-value" style="color:#059669">${o.fulfilled||0}</div>
+      </div>
+    `;
+  } catch(e) { console.error(e); }
+}
+
+async function loadOrders() {
+  const tbody = document.getElementById('orders-tbody');
+  tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:40px;color:#9ca3af">Loading…</td></tr>';
+  try {
+    const params = new URLSearchParams({ page: ordersPage });
+    const status = document.getElementById('order-status-filter').value;
+    const search = document.getElementById('order-search').value.trim();
+    if (status) params.set('status', status);
+    if (search) params.set('search', search);
+    const r = await api(`/api/orders?${params}`);
+    if (!r.orders?.length) {
+      tbody.innerHTML = `<tr><td colspan="8"><div class="empty"><div class="empty-icon">📭</div><h3>No orders found</h3></div></td></tr>`;
+      document.getElementById('orders-pagination').style.display = 'none';
+      return;
+    }
+    tbody.innerHTML = r.orders.map(o => `
+      <tr>
+        <td><strong>${esc(o.shopify_order_num)}</strong></td>
+        <td>
+          <div style="font-weight:500">${esc(o.customer_name||'—')}</div>
+          <div style="font-size:12px;color:#6b7280">${esc(o.customer_email||'')}</div>
+        </td>
+        <td style="max-width:180px">${formatItems(o.line_items)}</td>
+        <td><strong>${esc(o.currency)} ${esc(o.total_price)}</strong></td>
+        <td>${statusBadge(o.status)}</td>
+        <td>${paymentBadge(o.financial_status) || '<span style="color:#9ca3af;font-size:12px">paid</span>'}</td>
+        <td style="color:#6b7280;font-size:12px;white-space:nowrap">${formatDate(o.shopify_created_at||o.created_at)}</td>
+        <td><button class="btn btn-secondary btn-sm" onclick="openOrder(${o.id})">View →</button></td>
+      </tr>
+    `).join('');
+    const pg = document.getElementById('orders-pagination');
+    if (r.pages > 1) {
+      pg.style.display = 'flex';
+      document.getElementById('orders-pagination-info').textContent = `Page ${r.page} of ${r.pages} (${r.total})`;
+      document.getElementById('orders-prev').disabled = r.page <= 1;
+      document.getElementById('orders-next').disabled = r.page >= r.pages;
+    } else { pg.style.display = 'none'; }
+  } catch(e) {
+    tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;padding:20px;color:#ef4444">Error: ${esc(e.message)}</td></tr>`;
+  }
+}
+
+function handleOrderSearch(val) {
+  clearTimeout(ordersSearchTimer);
+  ordersSearchTimer = setTimeout(() => { ordersPage = 1; loadOrders(); }, 300);
+}
+
+// ─── Order Detail Panel ────────────────────────────────────────────────────────
+async function openOrder(id) {
+  document.getElementById('order-modal').classList.add('open');
+  document.getElementById('modal-body').innerHTML = '<div style="text-align:center;padding:40px;color:#9ca3af">Loading…</div>';
+  try {
+    const r = await api(`/api/orders/${id}`);
+    document.getElementById('modal-title').textContent = `Order ${r.order.shopify_order_num}`;
+    document.getElementById('modal-body').innerHTML = renderOrderDetail(r.order, r.log || [], r.assignments || []);
+  } catch(e) {
+    document.getElementById('modal-body').innerHTML = `<div style="color:#ef4444;padding:20px">Error: ${esc(e.message)}</div>`;
+  }
+}
+
+function closeOrderModal() { document.getElementById('order-modal').classList.remove('open'); }
+
+function renderOrderDetail(o, log, assignments) {
+  const addr  = o.shipping_address || {};
+  const items = o.line_items || [];
+  const supplierMap = Object.fromEntries(suppliers.map(s => [s.id, s.name]));
+
+  const addrStr = [addr.address1, addr.city, addr.country].filter(Boolean).join(', ');
+
+  // Group assignments by supplier
+  const assignedSupplierIds = [...new Set(assignments.filter(a => a.supplier_id).map(a => a.supplier_id))];
+
+  return `
+    <div class="section">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+        ${statusBadge(o.status)} ${paymentBadge(o.financial_status)}
+        <span style="font-size:12px;color:#9ca3af">${formatDate(o.shopify_created_at||o.created_at)}</span>
+      </div>
+      <div class="action-bar">
+        ${o.status === 'pending' ? `<button class="btn btn-primary btn-sm" onclick="setOrderStatus(${o.id},'processing')">⚙️ Mark Processing</button>` : ''}
+        <button class="btn btn-secondary btn-sm" onclick="syncOrder(${o.id}, this)">↻ Sync from Shopify</button>
+        <button class="btn btn-secondary btn-sm" onclick="triggerAssign(${o.id}, this)">⚡ Re-assign Items</button>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Customer</div>
+      <div class="field-row"><span class="field-label">Name</span><span class="field-value">${esc(o.customer_name||'—')}</span></div>
+      <div class="field-row"><span class="field-label">Email</span><span class="field-value">${esc(o.customer_email||'—')}</span></div>
+      <div class="field-row"><span class="field-label">Phone</span><span class="field-value">${esc(o.customer_phone||'—')}</span></div>
+      <div class="field-row"><span class="field-label">Address</span><span class="field-value">${esc(addrStr||'—')}</span></div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Line Items & Assignments</div>
+      ${items.map(item => {
+        const asg = assignments.find(a => String(a.shopify_line_item_id) === String(item.id));
+        const suppName = asg?.supplier_id ? (supplierMap[asg.supplier_id] || `Supplier #${asg.supplier_id}`) : null;
+        return `
+          <div class="line-item-row">
+            <div>
+              <div style="font-weight:500">${esc(item.title)}${item.variant?' <span style="color:#6b7280;font-size:12px">— '+esc(item.variant)+'</span>':''}</div>
+              <div style="font-size:12px;color:#9ca3af">${esc(item.sku||'no SKU')} · ×${item.quantity}</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px">
+              ${asg ? statusBadge(asg.status) : ''}
+              ${suppName ? `<span class="li-supplier-tag">${esc(suppName)}</span>` : '<span style="font-size:12px;color:#9ca3af">Unassigned</span>'}
+            </div>
+          </div>`;
+      }).join('')}
+    </div>
+
+    ${assignedSupplierIds.length ? `
+      <div class="section">
+        <div class="section-title">Supplier Tracking</div>
+        ${assignedSupplierIds.map(sid => {
+          const sName = supplierMap[sid] || `Supplier #${sid}`;
+          const sItems = assignments.filter(a => a.supplier_id === sid);
+          const first  = sItems[0];
+          return `
+            <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:12px;margin-bottom:8px">
+              <div style="font-weight:600;margin-bottom:6px">${esc(sName)}</div>
+              ${first?.tracking_number ? `
+                <div style="font-size:12px;color:#374151">
+                  ${esc(first.tracking_carrier)} — <strong>${esc(first.tracking_number)}</strong>
+                  ${first.tracking_url ? `<a href="${esc(first.tracking_url)}" target="_blank" style="color:#6366f1;margin-left:6px">Track →</a>` : ''}
+                </div>` : `<div style="font-size:12px;color:#9ca3af">No tracking yet</div>`}
+              <div style="margin-top:6px">${statusBadge(sItems[0]?.status||'assigned')}</div>
+            </div>`;
+        }).join('')}
+      </div>` : ''}
+
+    <div class="section">
+      <div class="section-title">Activity Log</div>
+      <div class="activity-log">
+        ${(log.length ? log : []).map(l => `
+          <div class="log-entry ${esc(l.event_type)}">
+            <div class="log-dot"></div>
+            <div>
+              <div class="log-text">${esc(l.description)}</div>
+              <span class="log-time">${formatDate(l.created_at)}</span>
+            </div>
+          </div>`).join('') || '<div style="color:#9ca3af;font-size:13px">No activity yet</div>'}
+      </div>
+    </div>
+  `;
+}
+
+async function setOrderStatus(id, status) {
+  try {
+    await api(`/api/orders/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) });
+    toast(`Status set to ${status}`, 'success');
+    openOrder(id);
+    loadOrders();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function syncOrder(id, btn) {
+  btn.disabled = true; btn.textContent = 'Syncing…';
+  try {
+    const r = await api(`/api/orders/${id}/sync`, { method: 'POST' });
+    toast(r.changes?.length ? r.changes.join(' · ') : 'Already up to date', 'success');
+    openOrder(id); loadOrders();
+  } catch(e) { toast(e.message, 'error'); }
+  finally { btn.disabled = false; btn.textContent = '↻ Sync from Shopify'; }
+}
+
+async function triggerAssign(id, btn) {
+  btn.disabled = true; btn.textContent = 'Assigning…';
+  try {
+    const r = await api(`/api/orders/${id}/assign`, { method: 'POST' });
+    toast(`${r.assigned} assigned, ${r.unassigned} unassigned`, 'success');
+    openOrder(id);
+  } catch(e) { toast(e.message, 'error'); }
+  finally { btn.disabled = false; btn.textContent = '⚡ Re-assign Items'; }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SUPPLIERS TAB
+// ══════════════════════════════════════════════════════════════════════════════
+
+async function loadSuppliers() {
+  const list = document.getElementById('suppliers-list');
+  list.innerHTML = '<div style="text-align:center;padding:40px;color:#9ca3af">Loading…</div>';
+  try {
+    const r = await api('/api/suppliers');
+    suppliers = r.suppliers || [];
+    populateSupplierSelects();
+    if (!suppliers.length) {
+      list.innerHTML = `<div class="empty"><div class="empty-icon">🏭</div><h3>No suppliers yet</h3><p style="font-size:13px">Click "+ Add Supplier" to create one.</p></div>`;
+      return;
+    }
+    const appUrl = window.location.origin;
+    list.innerHTML = suppliers.map(s => `
+      <div class="supplier-card">
+        <div class="supplier-card-header">
+          <div>
+            <div class="supplier-name">${esc(s.name)}</div>
+            <div class="supplier-meta">${esc(s.email)}</div>
+          </div>
+          ${s.active ? '<span class="badge badge-active">Active</span>' : '<span class="badge badge-inactive">Inactive</span>'}
+        </div>
+        ${s.notes ? `<div style="font-size:13px;color:#6b7280;margin-bottom:10px">${esc(s.notes)}</div>` : ''}
+        <div class="token-box" style="margin-bottom:12px">
+          <span id="token-${s.id}">${appUrl}/s/${esc(s.access_token)}</span>
+          <button class="btn btn-secondary btn-sm" onclick="copyToken(${s.id})">Copy</button>
+        </div>
+        <div class="supplier-actions">
+          <button class="btn btn-secondary btn-sm" onclick="openSupplierDialog(${s.id})">Edit</button>
+          <button class="btn btn-warning btn-sm" onclick="rotateToken(${s.id}, '${esc(s.name)}')">↻ Rotate Link</button>
+          <button class="btn btn-secondary btn-sm" onclick="toggleSupplier(${s.id}, ${s.active}, '${esc(s.name)}')">
+            ${s.active ? 'Deactivate' : 'Activate'}
+          </button>
+          <button class="btn btn-danger btn-sm" onclick="deleteSupplier(${s.id}, '${esc(s.name)}')">Delete</button>
+        </div>
+      </div>
+    `).join('');
+  } catch(e) {
+    list.innerHTML = `<div style="color:#ef4444;padding:20px">Error: ${esc(e.message)}</div>`;
+  }
+}
+
+function openSupplierDialog(id = null) {
+  editingSupplier = id;
+  document.getElementById('supplier-dialog-title').textContent = id ? 'Edit Supplier' : 'Add Supplier';
+  if (id) {
+    const s = suppliers.find(x => x.id === id);
+    document.getElementById('supp-name').value  = s?.name  || '';
+    document.getElementById('supp-email').value = s?.email || '';
+    document.getElementById('supp-notes').value = s?.notes || '';
+  } else {
+    document.getElementById('supp-name').value  = '';
+    document.getElementById('supp-email').value = '';
+    document.getElementById('supp-notes').value = '';
+  }
+  document.getElementById('supplier-dialog').classList.add('open');
+}
+
+function closeSupplierDialog() { document.getElementById('supplier-dialog').classList.remove('open'); }
+
+async function saveSupplier() {
+  const name  = document.getElementById('supp-name').value.trim();
+  const email = document.getElementById('supp-email').value.trim();
+  const notes = document.getElementById('supp-notes').value.trim();
+  if (!name || !email) { toast('Name and email are required', 'error'); return; }
+  try {
+    if (editingSupplier) {
+      await api(`/api/suppliers/${editingSupplier}`, { method: 'PUT', body: JSON.stringify({ name, email, notes }) });
+      toast('Supplier updated', 'success');
+    } else {
+      await api('/api/suppliers', { method: 'POST', body: JSON.stringify({ name, email, notes }) });
+      toast('Supplier created', 'success');
+    }
+    closeSupplierDialog();
+    loadSuppliers();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function toggleSupplier(id, currentActive, name) {
+  if (!confirm(`${currentActive ? 'Deactivate' : 'Activate'} supplier "${name}"?`)) return;
+  try {
+    await api(`/api/suppliers/${id}`, { method: 'PUT', body: JSON.stringify({ active: currentActive ? 0 : 1 }) });
+    toast(`Supplier ${currentActive ? 'deactivated' : 'activated'}`, 'success');
+    loadSuppliers();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function rotateToken(id, name) {
+  if (!confirm(`Rotate the portal link for "${name}"? The current link will stop working immediately.`)) return;
+  try {
+    const r = await api(`/api/suppliers/${id}/rotate-token`, { method: 'POST' });
+    toast('New link generated', 'success');
+    loadSuppliers();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function deleteSupplier(id, name) {
+  if (!confirm(`Delete supplier "${name}"? This cannot be undone.`)) return;
+  try {
+    await api(`/api/suppliers/${id}`, { method: 'DELETE' });
+    toast('Supplier deleted', 'success');
+    loadSuppliers();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+function copyToken(id) {
+  const text = document.getElementById('token-' + id)?.textContent;
+  if (text) { navigator.clipboard.writeText(text).then(() => toast('Copied!', 'success')); }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// RULES TAB
+// ══════════════════════════════════════════════════════════════════════════════
+
+async function loadRules() {
+  const tbody = document.getElementById('rules-tbody');
+  tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:40px;color:#9ca3af">Loading…</td></tr>';
+  try {
+    const r = await api('/api/rules');
+    const rules = r.rules || [];
+    if (!rules.length) {
+      tbody.innerHTML = `<tr><td colspan="6"><div class="empty"><div class="empty-icon">⚙️</div><h3>No rules yet</h3><p style="font-size:13px">Add rules to automatically route line items to suppliers.</p></div></td></tr>`;
+      return;
+    }
+    const supplierMap = Object.fromEntries(suppliers.map(s => [s.id, s.name]));
+    tbody.innerHTML = rules.map(rule => `
+      <tr>
+        <td><strong>${rule.priority}</strong></td>
+        <td><code style="background:#f3f4f6;padding:2px 6px;border-radius:4px;font-size:12px">${esc(rule.rule_type)}</code></td>
+        <td><strong>${esc(rule.rule_value)}</strong></td>
+        <td>${esc(supplierMap[rule.supplier_id] || `#${rule.supplier_id}`)}</td>
+        <td>${rule.active ? '<span class="badge badge-active">Active</span>' : '<span class="badge badge-inactive">Inactive</span>'}</td>
+        <td style="display:flex;gap:6px">
+          <button class="btn btn-secondary btn-sm" onclick="openRuleDialog(${rule.id})">Edit</button>
+          <button class="btn btn-danger btn-sm" onclick="deleteRule(${rule.id})">Delete</button>
+        </td>
+      </tr>
+    `).join('');
+  } catch(e) {
+    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:20px;color:#ef4444">Error: ${esc(e.message)}</td></tr>`;
+  }
+}
+
+let rulesCache = [];
+async function openRuleDialog(id = null) {
+  editingRule = id;
+  document.getElementById('rule-dialog-title').textContent = id ? 'Edit Rule' : 'Add Rule';
+  populateSupplierSelects();
+  if (id) {
+    try {
+      const r = await api('/api/rules');
+      const rule = (r.rules||[]).find(x => x.id === id);
+      if (rule) {
+        document.getElementById('rule-type').value     = rule.rule_type;
+        document.getElementById('rule-value').value    = rule.rule_value;
+        document.getElementById('rule-supplier').value = rule.supplier_id;
+        document.getElementById('rule-priority').value = rule.priority;
+      }
+    } catch(e) {}
+  } else {
+    document.getElementById('rule-type').value     = 'sku';
+    document.getElementById('rule-value').value    = '';
+    document.getElementById('rule-priority').value = '100';
+  }
+  document.getElementById('rule-dialog').classList.add('open');
+}
+
+function closeRuleDialog() { document.getElementById('rule-dialog').classList.remove('open'); }
+
+async function saveRule() {
+  const rule_type   = document.getElementById('rule-type').value;
+  const rule_value  = document.getElementById('rule-value').value.trim();
+  const supplier_id = parseInt(document.getElementById('rule-supplier').value);
+  const priority    = parseInt(document.getElementById('rule-priority').value) || 100;
+  if (!rule_value || !supplier_id) { toast('Type, value, and supplier are required', 'error'); return; }
+  try {
+    if (editingRule) {
+      await api(`/api/rules/${editingRule}`, { method: 'PUT', body: JSON.stringify({ rule_type, rule_value, supplier_id, priority, active: 1 }) });
+      toast('Rule updated', 'success');
+    } else {
+      await api('/api/rules', { method: 'POST', body: JSON.stringify({ rule_type, rule_value, supplier_id, priority }) });
+      toast('Rule created', 'success');
+    }
+    closeRuleDialog();
+    loadRules();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function deleteRule(id) {
+  if (!confirm('Delete this rule?')) return;
+  try {
+    await api(`/api/rules/${id}`, { method: 'DELETE' });
+    toast('Rule deleted', 'success');
+    loadRules();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ASSIGNMENTS TAB
+// ══════════════════════════════════════════════════════════════════════════════
+
+async function loadAssignments() {
+  const tbody = document.getElementById('assignments-tbody');
+  tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:40px;color:#9ca3af">Loading…</td></tr>';
+  try {
+    const params = new URLSearchParams({ page: asgPage });
+    const supplierId = document.getElementById('asg-supplier-filter').value;
+    const status     = document.getElementById('asg-status-filter').value;
+    if (supplierId) params.set('supplierId', supplierId);
+    if (status)     params.set('status', status);
+    const r = await api(`/api/assignments?${params}`);
+    const rows = r.assignments || [];
+    if (!rows.length) {
+      tbody.innerHTML = `<tr><td colspan="8"><div class="empty"><div class="empty-icon">📋</div><h3>No assignments found</h3></div></td></tr>`;
+      document.getElementById('asg-pagination').style.display = 'none';
+      return;
+    }
+    const supplierMap = Object.fromEntries(suppliers.map(s => [s.id, s.name]));
+    tbody.innerHTML = rows.map(a => `
+      <tr>
+        <td><strong>${esc(a.shopify_order_num || '#'+a.order_id)}</strong></td>
+        <td>
+          <div style="font-weight:500;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(a.title)}">${esc(a.title)}</div>
+          ${a.variant_title ? `<div style="font-size:12px;color:#6b7280">${esc(a.variant_title)}</div>` : ''}
+        </td>
+        <td style="font-size:12px;color:#6b7280">${esc(a.sku||'—')}</td>
+        <td>${a.quantity}</td>
+        <td>${a.supplier_id ? esc(supplierMap[a.supplier_id]||'#'+a.supplier_id) : '<span style="color:#9ca3af">Unassigned</span>'}</td>
+        <td>${statusBadge(a.status)}</td>
+        <td style="font-size:12px">${a.tracking_number ? `<strong>${esc(a.tracking_carrier)}</strong> ${esc(a.tracking_number)}` : '<span style="color:#9ca3af">—</span>'}</td>
+        <td><button class="btn btn-secondary btn-sm" onclick="openReassign(${a.id},'${esc(a.title)}')">Reassign</button></td>
+      </tr>
+    `).join('');
+    const pg = document.getElementById('asg-pagination');
+    if (r.pages > 1) {
+      pg.style.display = 'flex';
+      document.getElementById('asg-pagination-info').textContent = `Page ${r.page} of ${r.pages} (${r.total})`;
+      document.getElementById('asg-prev').disabled = r.page <= 1;
+      document.getElementById('asg-next').disabled = r.page >= r.pages;
+    } else { pg.style.display = 'none'; }
+  } catch(e) {
+    tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;padding:20px;color:#ef4444">Error: ${esc(e.message)}</td></tr>`;
+  }
+}
+
+function openReassign(id, title) {
+  reassignId = id;
+  document.getElementById('reassign-item-label').textContent = title;
+  document.getElementById('reassign-supplier').value = '';
+  populateSupplierSelects();
+  document.getElementById('reassign-dialog').classList.add('open');
+}
+function closeReassignDialog() { document.getElementById('reassign-dialog').classList.remove('open'); }
+
+async function confirmReassign() {
+  const supplierId = document.getElementById('reassign-supplier').value;
+  try {
+    await api(`/api/assignments/${reassignId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ supplier_id: supplierId ? parseInt(supplierId) : null }),
+    });
+    toast('Assignment updated', 'success');
+    closeReassignDialog();
+    loadAssignments();
+  } catch(e) { toast(e.message, 'error'); }
+}
+</script>
+</body>
+</html>

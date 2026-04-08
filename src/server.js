@@ -79,10 +79,14 @@ app.use(express.static(path.join(__dirname, '../public'), { index: false }));
 // 1. Shopify webhooks (no auth, but HMAC verified inside the route)
 app.use('/webhooks', require('./routes/webhook'));
 
-// 2. Dashboard API (auth required — handled inside the route)
+// 2. Supplier portal API — must come BEFORE the admin /api router so that
+//    /api/supplier/* requests are not consumed by the admin router first.
+app.use('/api/supplier', require('./routes/supplier'));
+
+// 3. Admin API (auth required — handled inside the route)
 app.use('/api', require('./routes/api'));
 
-// 3. Dashboard HTML pages (login + main page)
+// 4. Dashboard HTML pages (login + admin SPA + supplier SPA)
 app.use('/', require('./routes/dashboard'));
 
 // ── Health check (used by Railway / Render uptime checks) ────────────────────
@@ -107,14 +111,15 @@ const { syncRecentOrders } = require('./shopify/client');
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`
-  ┌──────────────────────────────────────────┐
-  │  📦  Shopify Supplier App running        │
-  │  http://localhost:${PORT}                   │
-  │                                          │
-  │  Dashboard:  http://localhost:${PORT}       │
-  │  Webhooks:   POST /webhooks/orders/create│
-  │  Health:     GET  /health                │
-  └──────────────────────────────────────────┘
+  ┌──────────────────────────────────────────────┐
+  │  📦  Shopify Fulfillment Portal running      │
+  │  http://localhost:${PORT}                       │
+  │                                              │
+  │  Admin:      http://localhost:${PORT}/          │
+  │  Supplier:   http://localhost:${PORT}/s/:token  │
+  │  Webhooks:   POST /webhooks/orders/create    │
+  │  Health:     GET  /health                    │
+  └──────────────────────────────────────────────┘
   `);
 
   // Fetch recent orders so the dashboard is populated immediately on startup

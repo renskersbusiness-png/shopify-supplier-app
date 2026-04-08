@@ -92,17 +92,20 @@ function getAssignmentsByOrder(orderId) {
 }
 
 function getAssignmentsBySupplier(supplierId, { status, limit = 100, offset = 0 } = {}) {
-  const where = status ? `AND a.status = '${status}'` : '';
+  const extraWhere = status ? 'AND a.status = ?' : '';
+  const params     = status
+    ? [supplierId, status, limit, offset]
+    : [supplierId, limit, offset];
   return getDb().prepare(`
     SELECT a.*, o.shopify_order_num, o.customer_name, o.customer_email,
            o.customer_phone, o.shipping_address, o.financial_status as order_financial_status,
-           o.shopify_created_at as order_date
+           o.shopify_created_at as order_created_at
     FROM line_item_assignments a
     JOIN orders o ON o.id = a.order_id
-    WHERE a.supplier_id = ? ${where}
+    WHERE a.supplier_id = ? ${extraWhere}
     ORDER BY a.created_at DESC
     LIMIT ? OFFSET ?
-  `).all(supplierId, limit, offset);
+  `).all(...params);
 }
 
 function getAssignmentById(id) {
@@ -216,6 +219,8 @@ function getAllAssignments({ supplierId, status, orderId, limit = 50, offset = 0
   const total = getDb().prepare(`
     SELECT COUNT(*) as count
     FROM line_item_assignments a
+    JOIN orders o ON o.id = a.order_id
+    LEFT JOIN suppliers s ON s.id = a.supplier_id
     ${clause}
   `).get(...params);
 
