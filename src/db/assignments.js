@@ -184,6 +184,33 @@ function getAssignmentStats(supplierId) {
   `).get(supplierId);
 }
 
+/**
+ * cancelOrderAssignments(orderId)
+ * Called when an order is cancelled. Marks all non-fulfilled assignments as
+ * 'cancelled' so suppliers can no longer act on them.
+ * Fulfilled assignments are left untouched — the shipment already went out.
+ */
+function cancelOrderAssignments(orderId) {
+  return getDb().prepare(`
+    UPDATE line_item_assignments
+    SET status = 'cancelled'
+    WHERE order_id = ? AND status NOT IN ('fulfilled', 'cancelled')
+  `).run(orderId);
+}
+
+/**
+ * updateFulfillmentTracking(shopifyFulfillmentId, tracking)
+ * Updates tracking info on all assignments that belong to a given Shopify
+ * fulfillment ID. Called from the fulfillments/update webhook.
+ */
+function updateFulfillmentTracking(shopifyFulfillmentId, { tracking_number, tracking_carrier, tracking_url }) {
+  return getDb().prepare(`
+    UPDATE line_item_assignments
+    SET tracking_number = ?, tracking_carrier = ?, tracking_url = ?
+    WHERE shopify_fulfillment_id = ?
+  `).run(tracking_number || null, tracking_carrier || null, tracking_url || null, String(shopifyFulfillmentId));
+}
+
 function getAllAssignmentStats() {
   return getDb().prepare(`
     SELECT
@@ -246,4 +273,6 @@ module.exports = {
   getAssignmentStats,
   getAllAssignmentStats,
   getAllAssignments,
+  cancelOrderAssignments,
+  updateFulfillmentTracking,
 };

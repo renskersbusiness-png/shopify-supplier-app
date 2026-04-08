@@ -14,6 +14,7 @@ const router  = express.Router();
 const { createOrder, getOrderByShopifyId, updateOrderStatus, updateFinancialStatus, logActivity } = require('../db/orders');
 const { assignOrderLineItems, getAssignedSupplierIds } = require('../services/assignment');
 const { notifySuppliers } = require('../services/notifications');
+const { cancelOrderAssignments, updateFulfillmentTracking } = require('../db/assignments');
 
 // ── HMAC Verification Middleware ──────────────────────────────────────────────
 
@@ -262,6 +263,157 @@ router.post('/orders/updated', verifyShopifyWebhook, (req, res) => {
     logActivity(order.id, 'status_change', `Payment ${financialStatus} — order hidden from supplier`);
     console.log(`[Webhook] orders/updated: ${order.shopify_order_num} financial_status → ${financialStatus}`);
   }
+});
+
+// ── orders/cancelled ──────────────────────────────────────────────────────────
+// Fired by Shopify when an order is cancelled (by merchant or customer).
+// Marks the order as cancelled and cancels all non-fulfilled assignments so
+// suppliers cannot continue processing items for a cancelled order.
+
+router.post('/orders/cancelled', verifyShopifyWebhook, (req, res) => {
+  res.status(200).json({ received: true });
+
+  const shopifyOrderId = String(req.body.id);
+  const orderNum       = req.body.name || shopifyOrderId;
+
+  console.log(`[Webhook] orders/cancelled received: ${orderNum} (shopify_id=${shopifyOrderId})`);
+
+  const order = getOrderByShopifyId(shopifyOrderId);
+
+  if (!order) {
+    console.log(`[Webhook] orders/cancelled: ${orderNum} not found in DB — skipping`);
+    return;
+  }
+
+  if (order.status === 'cancelled') {
+    console.log(`[Webhook] orders/cancelled: ${orderNum} already cancelled — skipping`);
+    return;
+  }
+
+  // Mark order cancelled
+  updateOrderStatus(order.id, 'cancelled');
+
+  // Sync financial_status if Shopify sends one (usually 'refunded' or 'voided')
+  const financialStatus = req.body.financial_status;
+  if (financialStatus && financialStatus !== order.financial_status) {
+    updateFinancialStatus(order.id, financialStatus);
+    console.log(`[Webhook] orders/cancelled: ${orderNum} financial_status → ${financialStatus}`);
+  }
+
+  // Cancel all open assignments — fulfilled ones stay as-is (shipment already sent)
+  const result = cancelOrderAssignments(order.id);
+  const cancelledCount = result.changes;
+
+  logActivity(
+    order.id,
+    'order_cancelled',
+    `Order cancelled by Shopify. ${cancelledCount} assignment(s) cancelled.`
+  );
+
+  console.log(`[Webhook] order cancelled: ${orderNum} — ${cancelledCount} assignment(s) cancelled`);
+});
+
+// ── fulfillments/update ───────────────────────────────────────────────────────
+// Fired by Shopify when a fulfillment's status or tracking info changes.
+// Common causes: carrier scans update the fulfillment to 'success', tracking
+// number is edited in Shopify admin, or a fulfillment is cancelled.
+//
+// We sync tracking info to the DB so the supplier portal always reflects the
+// latest data, and we advance the order to 'fulfilled' on a 'success' status.
+
+router.post('/fulfillments/update', verifyShopifyWebhook, (req, res) => {
+  res.status(200).json({ received: true });
+
+  const shopifyOrderId    = String(req.body.order_id);
+  const shopifyFulfillId  = String(req.body.id);
+  const fulfillmentStatus = (req.body.status || '').toLowerCase(); // success | failure | error | cancelled | pending
+
+  console.log(`[Webhook] fulfillments/update received: fulfillment=${shopifyFulfillId} order=${shopifyOrderId} status=${fulfillmentStatus}`);
+
+  const order = getOrderByShopifyId(shopifyOrderId);
+
+  if (!order) {
+    console.log(`[Webhook] fulfillments/update: order ${shopifyOrderId} not in DB — skipping`);
+    return;
+  }
+
+  const orderNum = order.shopify_order_num;
+
+  // ── Sync tracking info ────────────────────────────────────────────────────
+  // Shopify may provide tracking_number / tracking_numbers (array) and
+  // tracking_url / tracking_urls. Prefer the singular field; fall back to the
+  // first element of the array for carriers that provide multiple numbers.
+  const trackingNumber  = req.body.tracking_number
+    || (req.body.tracking_numbers  || [])[0]
+    || null;
+  const trackingUrl     = req.body.tracking_url
+    || (req.body.tracking_urls     || [])[0]
+    || null;
+  const trackingCarrier = req.body.tracking_company || null;
+
+  if (trackingNumber || trackingCarrier || trackingUrl) {
+    updateFulfillmentTracking(shopifyFulfillId, {
+      tracking_number:  trackingNumber,
+      tracking_carrier: trackingCarrier,
+      tracking_url:     trackingUrl,
+    });
+    console.log(`[Webhook] fulfillments/update: tracking synced for fulfillment=${shopifyFulfillId} (${trackingCarrier} ${trackingNumber})`);
+  }
+
+  // ── Status transitions ────────────────────────────────────────────────────
+
+  if (fulfillmentStatus === 'success') {
+    // All items in this fulfillment are now delivered / confirmed shipped.
+    // Advance the order to 'fulfilled' if not already there.
+    if (order.status !== 'fulfilled') {
+      updateOrderStatus(order.id, 'fulfilled');
+      logActivity(
+        order.id,
+        'status_change',
+        `Status set to "fulfilled" (Shopify fulfillment ${shopifyFulfillId} succeeded)`
+      );
+      console.log(`[Webhook] fulfillment updated: order ${orderNum} → fulfilled`);
+    } else {
+      console.log(`[Webhook] fulfillments/update: ${orderNum} already fulfilled — status unchanged`);
+    }
+
+  } else if (fulfillmentStatus === 'cancelled') {
+    // A fulfillment was voided in Shopify admin. Revert the order to 'processing'
+    // so it can be re-fulfilled. Only revert if currently shipped or fulfilled —
+    // never downgrade past processing.
+    if (order.status === 'shipped' || order.status === 'fulfilled') {
+      updateOrderStatus(order.id, 'processing');
+      logActivity(
+        order.id,
+        'status_change',
+        `Shopify fulfillment ${shopifyFulfillId} was cancelled — order reverted to "processing"`
+      );
+      console.log(`[Webhook] fulfillments/update: ${orderNum} fulfillment cancelled → order reverted to processing`);
+    } else {
+      console.log(`[Webhook] fulfillments/update: fulfillment ${shopifyFulfillId} cancelled, order already at '${order.status}' — no change`);
+    }
+    logActivity(
+      order.id,
+      'fulfillment_cancelled',
+      `Shopify fulfillment ${shopifyFulfillId} cancelled`
+    );
+
+  } else if (fulfillmentStatus === 'failure' || fulfillmentStatus === 'error') {
+    // Carrier returned an error or the fulfillment failed. Log it but don't
+    // change status automatically — a human should review before re-fulfilling.
+    logActivity(
+      order.id,
+      'fulfillment_error',
+      `Shopify fulfillment ${shopifyFulfillId} reported status: ${fulfillmentStatus}`
+    );
+    console.log(`[Webhook] fulfillments/update: ${orderNum} fulfillment ${shopifyFulfillId} → ${fulfillmentStatus} (logged, no automatic status change)`);
+
+  } else {
+    // pending or unknown — just log, no DB change
+    console.log(`[Webhook] fulfillments/update: ${orderNum} fulfillment ${shopifyFulfillId} → ${fulfillmentStatus} (no action needed)`);
+  }
+
+  console.log(`[Webhook] fulfillment updated: order ${orderNum}`);
 });
 
 // ── Shopify webhook health check ──────────────────────────────────────────────
