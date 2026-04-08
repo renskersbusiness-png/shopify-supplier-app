@@ -934,26 +934,51 @@ function paymentBadge(financialStatus, workflowStatus) {
 
 // "Next Action" pill shown in the order list — tells the supplier exactly
 // what needs to happen with this order right now.
+//
+// Logic is driven primarily by Shopify financial_status, NOT internal status.
+// Internal workflow status (processing/shipped/fulfilled) is only used to
+// determine the shipping step — never to decide if payment is missing.
+//
+// Mapping:
+//   financial_status=pending                          → Awaiting Payment
+//   financial_status=authorized|paid|partially_refunded, status=fulfilled → Completed
+//   financial_status=authorized|paid|partially_refunded, tracking present → Fulfill in Shopify
+//   financial_status=authorized|paid|partially_refunded, no tracking      → Add Tracking
+//   financial_status=partially_paid                   → Partial Payment (with tracking sub-state)
+//   financial_status=refunded|voided                  → Refunded
 function nextActionPill(o) {
+  const fs = o.financial_status;
+
+  // Truly unpaid — financial_status from Shopify says no money received
+  if (fs === 'pending') {
+    return `<span class="action-pill action-waiting">⏳ Awaiting Payment</span>`;
+  }
+
+  // Cancelled / refunded — nothing to do
+  if (fs === 'refunded' || fs === 'voided') {
+    return `<span class="action-pill action-fulfilled">Refunded</span>`;
+  }
+
+  // Completed regardless of financial status
   if (o.status === 'fulfilled') {
     return `<span class="action-pill action-fulfilled">✓ Completed</span>`;
   }
-  if (o.financial_status === 'partially_paid') {
+
+  // Partial payment — show shipping sub-state so supplier knows where they are
+  if (fs === 'partially_paid') {
+    if (o.status === 'shipped' && o.tracking_number) {
+      return `<span class="action-pill action-partial" title="Partial payment — fulfill open items only">⚠ Fulfill (Partial Pay)</span>`;
+    }
     return `<span class="action-pill action-partial" title="Part of this order is unpaid — ship only Shopify-open items">⚠ Partial Payment</span>`;
   }
-  if (o.financial_status === 'refunded' || o.financial_status === 'voided') {
-    return `<span class="action-pill action-fulfilled">Refunded</span>`;
-  }
+
+  // Paid / authorized / partially_refunded — determine shipping step
   if (o.status === 'shipped' && o.tracking_number) {
     return `<span class="action-pill action-ready-fulfill">→ Fulfill in Shopify</span>`;
   }
-  if (o.status === 'processing' || o.status === 'shipped') {
-    return `<span class="action-pill action-add-tracking">+ Add Tracking</span>`;
-  }
-  if (o.status === 'pending') {
-    return `<span class="action-pill action-waiting">⏳ Awaiting Payment</span>`;
-  }
-  return '';
+
+  // authorized, paid, partially_refunded — all need tracking added
+  return `<span class="action-pill action-add-tracking">+ Add Tracking</span>`;
 }
 
 function formatItems(items) {
