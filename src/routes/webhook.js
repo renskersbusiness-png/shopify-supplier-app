@@ -18,60 +18,39 @@ const { notifySuppliers } = require('../services/notifications');
 // ── HMAC Verification Middleware ──────────────────────────────────────────────
 
 function verifyShopifyWebhook(req, res, next) {
-  // ── Debug logging (remove once webhook verification is confirmed working) ──
-  console.log('[Webhook] rawBody exists:', !!req.rawBody);
-  console.log('[Webhook] rawBody length:', req.rawBody ? req.rawBody.length : 0);
-
   const hmacHeader = (req.headers['x-shopify-hmac-sha256'] || '').trim();
-  console.log('[Webhook] Received HMAC header:', hmacHeader || '(missing)');
-
   if (!hmacHeader) {
-    console.warn('[Webhook] Missing HMAC header — rejecting request');
     return res.status(401).json({ error: 'Missing HMAC header' });
   }
 
-  // Admin-created webhooks (Settings → Notifications → Webhooks) are signed
-  // with the webhook signing secret shown on that page, NOT the app client secret.
   const secret = process.env.SHOPIFY_WEBHOOK_SECRET;
-  console.log('[Webhook] SHOPIFY_WEBHOOK_SECRET exists:', !!secret);
   if (!secret) {
-    console.error('[Webhook] SHOPIFY_WEBHOOK_SECRET is not set!');
+    console.error('[Webhook] SHOPIFY_WEBHOOK_SECRET is not set');
     return res.status(500).json({ error: 'Webhook secret not configured' });
   }
-
   if (!req.rawBody) {
     console.error('[Webhook] req.rawBody is undefined — raw body middleware did not run');
     return res.status(500).json({ error: 'Raw body not captured' });
   }
 
-  // Compute HMAC-SHA256 of the exact raw request body, base64-encoded
   const calculated = crypto
     .createHmac('sha256', secret)
     .update(req.rawBody, 'utf8')
     .digest('base64');
 
-  console.log('[Webhook] Calculated HMAC:  ', calculated);
-
-  // Timing-safe comparison — both buffers must be the same length
   try {
     const calcBuf     = Buffer.from(calculated, 'utf8');
     const receivedBuf = Buffer.from(hmacHeader, 'utf8');
-
     const valid =
       calcBuf.length === receivedBuf.length &&
       crypto.timingSafeEqual(calcBuf, receivedBuf);
-
-    console.log('[Webhook] HMAC valid:', valid);
-
     if (!valid) {
-      console.warn('[Webhook] HMAC mismatch — rejecting request');
+      console.warn('[Webhook] HMAC mismatch — rejecting');
       return res.status(401).json({ error: 'Invalid HMAC signature' });
     }
   } catch (err) {
-    console.warn('[Webhook] HMAC comparison error:', err.message);
     return res.status(401).json({ error: 'HMAC verification failed' });
   }
-
   next();
 }
 
@@ -109,14 +88,16 @@ async function processNewOrder(payload) {
     address.last_name  || customer.last_name,
   ].filter(Boolean).join(' ') || payload.email || 'Unknown';
 
-  // Simplify line items — keep only what we need
+  // Simplify line items for storage. Keep vendor + product_id so the admin
+  // "Re-assign items" endpoint can re-run the rule engine against the DB copy.
   const lineItems = (payload.line_items || []).map(item => ({
     id:         item.id,
     title:      item.title,
-    variant:    item.variant_title,
-    sku:        item.sku,
+    variant:    item.variant_title   || null,
+    sku:        item.sku             || null,
+    vendor:     item.vendor          || null,
+    product_id: item.product_id ? String(item.product_id) : null,
     quantity:   item.quantity,
-    price:      item.price,
   }));
 
   const result = createOrder({

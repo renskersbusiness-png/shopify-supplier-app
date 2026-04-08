@@ -52,7 +52,6 @@ function authenticateSupplierToken(req, res) {
   req.session.role          = 'supplier';
   req.session.supplierId    = supplier.id;
   req.session.supplierName  = supplier.name;
-  req.session.supplierToken = token;
 
   res.redirect('/supplier.html');
 }

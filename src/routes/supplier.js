@@ -11,11 +11,17 @@ const router  = express.Router();
 const { requireSupplierSession } = require('../middleware/auth');
 const asgDb = require('../db/assignments');
 const { updateAssignmentTracking, markGroupFulfilled } = require('../db/assignments');
-const { getOrderById }                  = require('../db/orders');
+const { getOrderById, logActivity }     = require('../db/orders');
 const { createFulfillmentForLineItems } = require('../shopify/client');
 
 // All routes here require a supplier session
 router.use(requireSupplierSession);
+
+// Strip pricing fields — suppliers never see prices or order totals
+function stripPricing(a) {
+  const { price, currency, order_currency, ...rest } = a;
+  return rest;
+}
 router.use((req, res, next) => {
   res.setHeader('Cache-Control', 'no-store');
   next();
@@ -39,8 +45,9 @@ router.get('/assignments', (req, res) => {
     const limit      = 50;
     const offset     = (parseInt(page) - 1) * limit;
 
-    const assignments = asgDb.getAssignmentsBySupplier(supplierId, { status, limit, offset });
-    const stats       = asgDb.getAssignmentStats(supplierId);
+    const assignments = asgDb.getAssignmentsBySupplier(supplierId, { status, limit, offset })
+      .map(stripPricing);
+    const stats = asgDb.getAssignmentStats(supplierId);
 
     res.json({ assignments, stats, page: parseInt(page) });
   } catch (err) {
@@ -66,7 +73,7 @@ router.get('/assignments/:id', (req, res) => {
       return res.status(403).json({ error: 'Order is not fully paid' });
     }
 
-    res.json({ assignment });
+    res.json({ assignment: stripPricing(assignment) });
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch assignment' });
   }
@@ -100,6 +107,9 @@ router.patch('/tracking', async (req, res) => {
 
     // Update tracking in DB
     updateAssignmentTracking(order_id, supplierId, { tracking_number, tracking_carrier, tracking_url: tracking_url || null });
+
+    logActivity(order.id, 'tracking_added',
+      `Supplier ${supplierId} added tracking: ${tracking_carrier} — ${tracking_number}`);
 
     res.json({ success: true });
   } catch (err) {
@@ -155,7 +165,8 @@ router.post('/fulfill', async (req, res) => {
     const fulfillmentId = fulfillment.id.split('/').pop();
     markGroupFulfilled(order_id, supplierId, fulfillmentId);
 
-    console.log(`[Supplier ${supplierId}] Fulfilled ${lineItemIds.length} item(s) for order ${order.shopify_order_num}`);
+    logActivity(order.id, 'fulfilled',
+      `Supplier ${supplierId} fulfilled ${lineItemIds.length} item(s) in Shopify (fulfillment: ${fulfillmentId})`);
 
     res.json({ success: true, fulfillment_id: fulfillmentId });
   } catch (err) {

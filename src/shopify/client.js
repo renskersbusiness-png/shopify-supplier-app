@@ -12,7 +12,7 @@ const fetch  = require('node-fetch');
 const { getAccessToken, clearTokenCache } = require('./auth');
 
 const SHOPIFY_DOMAIN = process.env.SHOPIFY_SHOP_DOMAIN;
-const API_VERSION    = '2024-01'; // Bump this annually
+const API_VERSION    = '2025-01'; // Quarterly stable release; bump annually
 
 const GRAPHQL_URL = `https://${SHOPIFY_DOMAIN}/admin/api/${API_VERSION}/graphql.json`;
 
@@ -251,7 +251,7 @@ async function syncRecentOrders() {
   const domain = process.env.SHOPIFY_SHOP_DOMAIN;
 
   const res = await fetch(
-    `https://${domain}/admin/api/2026-04/orders.json?limit=50&status=any`,
+    `https://${domain}/admin/api/${API_VERSION}/orders.json?limit=50&status=any`,
     { headers: { 'X-Shopify-Access-Token': token } }
   );
 
@@ -307,12 +307,13 @@ async function syncRecentOrders() {
     ].filter(Boolean).join(' ') || order.email || 'Unknown';
 
     const lineItems = (order.line_items || []).map(item => ({
-      id:       item.id,
-      title:    item.title,
-      variant:  item.variant_title,
-      sku:      item.sku,
-      quantity: item.quantity,
-      price:    item.price,
+      id:         item.id,
+      title:      item.title,
+      variant:    item.variant_title   || null,
+      sku:        item.sku             || null,
+      vendor:     item.vendor          || null,
+      product_id: item.product_id ? String(item.product_id) : null,
+      quantity:   item.quantity,
     }));
 
     const result = createOrder({
@@ -347,7 +348,7 @@ async function fetchOrderFromShopify(shopifyOrderId) {
   const domain = process.env.SHOPIFY_SHOP_DOMAIN;
 
   const res = await fetch(
-    `https://${domain}/admin/api/2026-04/orders/${shopifyOrderId}.json`,
+    `https://${domain}/admin/api/${API_VERSION}/orders/${shopifyOrderId}.json`,
     { headers: { 'X-Shopify-Access-Token': token } }
   );
 
