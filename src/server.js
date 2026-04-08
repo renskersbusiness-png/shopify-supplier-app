@@ -107,7 +107,6 @@ app.use((err, req, res, next) => {
 
 // ── Start ─────────────────────────────────────────────────────────────────────
 const { syncRecentOrders } = require('./shopify/client');
-const path = require('path');
 
 // Warn loudly if the DB is in the default ephemeral path on a cloud host.
 // On Railway: create a Volume, mount it at /data, set DB_PATH=/data/orders.db
