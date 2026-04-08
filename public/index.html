@@ -562,7 +562,7 @@ async function loadOrders() {
         <td><strong>${esc(o.currency)} ${esc(o.total_price)}</strong></td>
         <td>
           ${statusBadge(o.status)}
-          ${paymentBadge(o.financial_status, o.status)}
+          ${userRole === 'admin' ? paymentBadge(o.financial_status) : ''}
         </td>
         <td>${nextActionPill(o)}</td>
         <td style="color:#6b7280;font-size:12px">${formatDate(o.shopify_created_at || o.created_at)}</td>
@@ -631,49 +631,30 @@ async function openOrder(id) {
     const r = await api(`/api/orders/${id}`);
     const o = r.order;
 
-    // For partially_paid orders in supplier view, fetch the OPEN fulfillment
-    // order items from Shopify so the supplier only sees what can actually be
-    // shipped — not unpaid upsell / after-sell lines.
-    let fulfillableItems = null;
-    if (userRole !== 'admin' && o.financial_status === 'partially_paid') {
-      try {
-        const fr = await api(`/api/orders/${id}/fulfillable`);
-        fulfillableItems = fr.items; // null if fetch fails — falls back to line_items
-      } catch(e) {
-        console.warn('[fulfillable] Could not load fulfillable items:', e.message);
-      }
-    }
-
     document.getElementById('modal-title').textContent = `Order ${o.shopify_order_num}`;
-    body.innerHTML = renderOrderDetail(o, r.log || [], fulfillableItems);
+    body.innerHTML = renderOrderDetail(o, r.log || []);
   } catch(e) {
     body.innerHTML = `<div style="color:#ef4444;padding:20px">Error: ${e.message}</div>`;
   }
 }
 
-function renderOrderDetail(o, log, fulfillableItems = null) {
+function renderOrderDetail(o, log) {
   const addr = o.shipping_address || {};
-  // For partially_paid orders in supplier view, use only the OPEN fulfillment
-  // order items fetched live from Shopify. Fall back to all line_items if the
-  // fetch failed or if we're in admin view / fully paid order.
-  const items = fulfillableItems ?? (o.line_items || []);
-  const isPartialView = fulfillableItems !== null;
+  const items = o.line_items || [];
 
   return `
     <!-- Status + Actions -->
     <div class="section">
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">
         ${statusBadge(o.status)}
-        ${paymentBadge(o.financial_status, o.status)}
+        ${userRole === 'admin' ? paymentBadge(o.financial_status) : ''}
         <span style="font-size:12px;color:#9ca3af">${formatDate(o.shopify_created_at || o.created_at)}</span>
       </div>
-      ${o.financial_status === 'partially_paid' ? `
+      ${userRole === 'admin' && o.financial_status === 'partially_paid' ? `
         <div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:13px;color:#9a3412">
-          <strong>Partial Payment:</strong> This order has not been fully paid.
-          Total: ${esc(o.currency)} ${esc(o.total_price)} — part of this amount is still outstanding.
-          ${userRole === 'admin' ? 'You can still manually adjust the workflow status.' : 'You can add tracking and fulfill what is ready.'}
+          <strong>Partial Payment:</strong> This order has not been fully paid. Part of the amount is still outstanding.
         </div>` : ''}
-      ${o.financial_status === 'refunded' || o.financial_status === 'voided' ? `
+      ${userRole === 'admin' && (o.financial_status === 'refunded' || o.financial_status === 'voided') ? `
         <div style="background:#f3f4f6;border:1px solid #d1d5db;border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:13px;color:#6b7280">
           <strong>Payment ${esc(o.financial_status)}.</strong> This order has been cancelled or refunded.
         </div>` : ''}
@@ -728,18 +709,7 @@ function renderOrderDetail(o, log, fulfillableItems = null) {
 
     <!-- Line Items -->
     <div class="section">
-      <div class="section-title">
-        ${isPartialView
-          ? `Items to Ship (${items.length} fulfillable)`
-          : `Items (${items.length})`}
-      </div>
-      ${isPartialView ? `
-        <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;padding:8px 12px;margin-bottom:10px;font-size:12px;color:#1e40af">
-          Only showing items from <strong>paid / open fulfillment orders</strong>.
-          Unpaid upsell or after-sell items are hidden.
-        </div>` : ''}
-      ${items.length === 0 ? `
-        <div style="color:#9ca3af;font-size:13px">No fulfillable items found.</div>` : ''}
+      <div class="section-title">Items (${items.length})</div>
       ${items.map(item => `
         <div class="line-item">
           <div>
@@ -749,16 +719,13 @@ function renderOrderDetail(o, log, fulfillableItems = null) {
           </div>
           <div>
             <span class="line-item-qty">×${item.quantity}</span>
-            ${item.price
-              ? `<span style="font-weight:600;margin-left:8px">${esc(item.currency || o.currency)} ${esc(item.price)}</span>`
-              : ''}
+            <span style="font-weight:600;margin-left:8px">${esc(o.currency)} ${esc(item.price)}</span>
           </div>
         </div>
       `).join('')}
-      ${!isPartialView ? `
-        <div style="text-align:right;font-weight:700;font-size:14px;margin-top:8px;padding-right:4px">
-          Total: ${esc(o.currency)} ${esc(o.total_price)}
-        </div>` : ''}
+      <div style="text-align:right;font-weight:700;font-size:14px;margin-top:8px;padding-right:4px">
+        Total: ${esc(o.currency)} ${esc(o.total_price)}
+      </div>
     </div>
 
     <!-- Tracking -->
@@ -936,9 +903,8 @@ function statusBadge(status) {
   return `<span class="badge badge-${status}">${status}</span>`;
 }
 
-// Show a secondary payment badge only when it adds information beyond the
-// workflow status badge — i.e. when payment is partial, refunded, or voided.
-function paymentBadge(financialStatus, workflowStatus) {
+// Admin-only: secondary badge showing Shopify payment state when noteworthy.
+function paymentBadge(financialStatus) {
   if (financialStatus === 'partially_paid') {
     return `<span class="badge badge-partial">Partial Pay</span>`;
   }
@@ -947,6 +913,9 @@ function paymentBadge(financialStatus, workflowStatus) {
   }
   if (financialStatus === 'voided') {
     return `<span class="badge badge-refunded">Voided</span>`;
+  }
+  if (financialStatus === 'pending') {
+    return `<span class="badge badge-pending">Unpaid</span>`;
   }
   return '';
 }
@@ -965,38 +934,46 @@ function paymentBadge(financialStatus, workflowStatus) {
 //   financial_status=authorized|paid|partially_refunded, no tracking      → Add Tracking
 //   financial_status=partially_paid                   → Partial Payment (with tracking sub-state)
 //   financial_status=refunded|voided                  → Refunded
+// Next Action pill — driven by financial_status (Shopify source of truth), not
+// internal workflow status alone.
+//
+// Supplier mapping (only fully paid orders ever reach supplier):
+//   paid + fulfilled               → Completed
+//   paid + tracking present        → Fulfill in Shopify
+//   paid + no tracking             → Add Tracking
+//
+// Admin-only mapping (all statuses visible):
+//   financial_status=pending       → Awaiting Payment
+//   financial_status=partially_paid→ Partial Payment (admin monitors)
+//   financial_status=refunded|void → Refunded
+//   paid + fulfilled               → Completed
+//   paid + tracking                → Fulfill in Shopify
+//   paid + no tracking             → Add Tracking
 function nextActionPill(o) {
   const fs = o.financial_status;
 
-  // Truly unpaid — financial_status from Shopify says no money received
+  // Unpaid — only visible to admin
   if (fs === 'pending') {
     return `<span class="action-pill action-waiting">⏳ Awaiting Payment</span>`;
   }
 
-  // Cancelled / refunded — nothing to do
+  // Refunded / voided — only visible to admin
   if (fs === 'refunded' || fs === 'voided') {
     return `<span class="action-pill action-fulfilled">Refunded</span>`;
   }
 
-  // Completed regardless of financial status
+  // Partial payment — only visible to admin
+  if (fs === 'partially_paid') {
+    return `<span class="action-pill action-partial">⚠ Partial Payment</span>`;
+  }
+
+  // Fully paid (paid, authorized, partially_refunded) — supplier sees these
   if (o.status === 'fulfilled') {
     return `<span class="action-pill action-fulfilled">✓ Completed</span>`;
   }
-
-  // Partial payment — show shipping sub-state so supplier knows where they are
-  if (fs === 'partially_paid') {
-    if (o.status === 'shipped' && o.tracking_number) {
-      return `<span class="action-pill action-partial" title="Partial payment — fulfill open items only">⚠ Fulfill (Partial Pay)</span>`;
-    }
-    return `<span class="action-pill action-partial" title="Part of this order is unpaid — ship only Shopify-open items">⚠ Partial Payment</span>`;
-  }
-
-  // Paid / authorized / partially_refunded — determine shipping step
   if (o.status === 'shipped' && o.tracking_number) {
     return `<span class="action-pill action-ready-fulfill">→ Fulfill in Shopify</span>`;
   }
-
-  // authorized, paid, partially_refunded — all need tracking added
   return `<span class="action-pill action-add-tracking">+ Add Tracking</span>`;
 }
 

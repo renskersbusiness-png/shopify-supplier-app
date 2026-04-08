@@ -30,9 +30,9 @@ function createOrder(data) {
 
 // ── Read ──────────────────────────────────────────────────────────────────────
 
-// financial_status values that suppliers are allowed to see.
-// Unpaid (pending), voided, and refunded orders are admin-only.
-const SUPPLIER_VISIBLE_FINANCIAL = `financial_status IN ('authorized', 'partially_paid', 'paid', 'partially_refunded')`;
+// Supplier view: only fully paid orders.
+// Partial payments, pending, authorized, refunded, and voided are admin-only.
+const SUPPLIER_VISIBLE_FINANCIAL = `financial_status = 'paid'`;
 
 function getAllOrders({ status, search, limit = 50, offset = 0, supplierOnly = false } = {}) {
   const db = getDb();
