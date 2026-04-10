@@ -167,6 +167,45 @@ function runMigrations(db) {
     END
   `);
 
+  // ── v4: Shopify fulfillment service + supplier SKU catalog ────────────────
+  // Add Shopify location/service columns to existing suppliers rows.
+  // On a fresh DB these columns don't exist yet; guard with a column check.
+  const supplierCols = db.pragma('table_info(suppliers)').map(c => c.name);
+  if (!supplierCols.includes('shopify_location_id')) {
+    db.exec(`ALTER TABLE suppliers ADD COLUMN shopify_location_id TEXT`);
+    db.exec(`ALTER TABLE suppliers ADD COLUMN shopify_service_id  TEXT`);
+    console.log('[DB] v4: added shopify_location_id, shopify_service_id to suppliers');
+  }
+
+  // supplier_skus: links each supplier to the SKUs they stock.
+  // Separate from assignment_rules (which routes ORDERS) — this table is for
+  // inventory management (what stock does a supplier hold per SKU).
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS supplier_skus (
+      id                        INTEGER PRIMARY KEY AUTOINCREMENT,
+      supplier_id               INTEGER NOT NULL REFERENCES suppliers(id) ON DELETE CASCADE,
+      sku                       TEXT    NOT NULL,
+      product_title             TEXT,
+      shopify_variant_id        TEXT,
+      shopify_inventory_item_id TEXT,
+      stock_quantity            INTEGER NOT NULL DEFAULT 0,
+      last_synced_at            TEXT,
+      notes                     TEXT,
+      created_at                TEXT    NOT NULL DEFAULT (datetime('now')),
+      updated_at                TEXT    NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(supplier_id, sku)
+    )
+  `);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_ss_supplier ON supplier_skus(supplier_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_ss_sku      ON supplier_skus(sku)`);
+  db.exec(`
+    CREATE TRIGGER IF NOT EXISTS supplier_skus_updated_at
+    AFTER UPDATE ON supplier_skus
+    BEGIN
+      UPDATE supplier_skus SET updated_at = datetime('now') WHERE id = NEW.id;
+    END
+  `);
+
   console.log('[DB] Schema ready');
 }
 

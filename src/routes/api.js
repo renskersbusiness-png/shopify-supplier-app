@@ -8,12 +8,15 @@ const express = require('express');
 const router  = express.Router();
 
 const { requireAuth } = require('../middleware/auth');
-const db      = require('../db/orders');
-const suppDb  = require('../db/suppliers');
-const asgDb   = require('../db/assignments');
+const db       = require('../db/orders');
+const suppDb   = require('../db/suppliers');
+const asgDb    = require('../db/assignments');
+const skuDb    = require('../db/supplier_skus');
 const { reassignLineItem }             = require('../services/assignment');
 const { notifySupplier }               = require('../services/notifications');
-const { createFulfillmentForLineItems, fetchOrderFromShopify } = require('../shopify/client');
+const { createFulfillmentForLineItems, fetchOrderFromShopify,
+        createFulfillmentService, getInventoryItemBySku,
+        setInventoryLevel }            = require('../shopify/client');
 
 // ── Global middleware ─────────────────────────────────────────────────────────
 
@@ -281,6 +284,184 @@ router.delete('/suppliers/:id', adminOnly, (req, res) => {
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'Failed to delete supplier' });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SUPPLIER SHOPIFY LOCATION  (admin only)
+// Creates a Shopify Fulfillment Service for the supplier, which auto-creates
+// a linked Location. The location ID is stored on the supplier record and
+// used for all inventory operations for that supplier.
+// ══════════════════════════════════════════════════════════════════════════════
+
+// POST /api/suppliers/:id/create-location
+// Idempotent — if the supplier already has a location ID we just return it.
+router.post('/suppliers/:id/create-location', adminOnly, async (req, res) => {
+  try {
+    const supplier = suppDb.getSupplierById(req.params.id);
+    if (!supplier) return res.status(404).json({ error: 'Supplier not found' });
+
+    if (supplier.shopify_location_id) {
+      console.log(`[API] Supplier ${supplier.id} already has location ${supplier.shopify_location_id}`);
+      return res.json({
+        already_exists:  true,
+        shopify_location_id: supplier.shopify_location_id,
+        shopify_service_id:  supplier.shopify_service_id,
+      });
+    }
+
+    console.log(`[API] Creating Shopify fulfillment service for supplier "${supplier.name}"`);
+    const { serviceId, locationId, name } = await createFulfillmentService(supplier.name);
+
+    suppDb.updateSupplierShopifyIds(supplier.id, {
+      shopify_service_id:  serviceId,
+      shopify_location_id: locationId,
+    });
+
+    console.log(`[API] Supplier ${supplier.id} → location=${locationId} service=${serviceId}`);
+    res.json({
+      success:             true,
+      shopify_location_id: locationId,
+      shopify_service_id:  serviceId,
+      service_name:        name,
+    });
+  } catch (err) {
+    console.error('[API] POST /suppliers/:id/create-location error:', err.message);
+    res.status(502).json({ error: err.message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SUPPLIER SKU CATALOG  (admin only)
+// Manages which SKUs a supplier stocks. Separate from assignment_rules —
+// these entries track inventory references and stock levels per supplier.
+// ══════════════════════════════════════════════════════════════════════════════
+
+// GET /api/suppliers/:id/skus
+router.get('/suppliers/:id/skus', adminOnly, (req, res) => {
+  try {
+    const supplier = suppDb.getSupplierById(req.params.id);
+    if (!supplier) return res.status(404).json({ error: 'Supplier not found' });
+    res.json({ skus: skuDb.getSkusForSupplier(req.params.id) });
+  } catch (err) {
+    console.error('[API] GET /suppliers/:id/skus error:', err);
+    res.status(500).json({ error: 'Failed to fetch SKUs' });
+  }
+});
+
+// POST /api/suppliers/:id/skus — add a SKU to this supplier's catalog
+router.post('/suppliers/:id/skus', adminOnly, (req, res) => {
+  try {
+    const supplier = suppDb.getSupplierById(req.params.id);
+    if (!supplier) return res.status(404).json({ error: 'Supplier not found' });
+
+    const { sku, product_title, notes } = req.body;
+    if (!sku?.trim()) return res.status(400).json({ error: 'sku is required' });
+
+    // Prevent duplicates
+    const existing = skuDb.getSkuBySupplierAndSku(req.params.id, sku.trim().toUpperCase());
+    if (existing) return res.status(409).json({ error: `SKU "${sku}" is already assigned to this supplier` });
+
+    const result = skuDb.createSupplierSku({
+      supplier_id:   parseInt(req.params.id),
+      sku,
+      product_title: product_title || null,
+      notes:         notes         || null,
+    });
+    const entry = skuDb.getSkuById(result.lastInsertRowid);
+    res.status(201).json({ sku: entry });
+  } catch (err) {
+    console.error('[API] POST /suppliers/:id/skus error:', err);
+    res.status(500).json({ error: 'Failed to add SKU' });
+  }
+});
+
+// DELETE /api/suppliers/:id/skus/:skuId — remove a SKU from this supplier's catalog
+router.delete('/suppliers/:id/skus/:skuId', adminOnly, (req, res) => {
+  try {
+    skuDb.deleteSupplierSku(req.params.skuId);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to delete SKU' });
+  }
+});
+
+// POST /api/suppliers/:id/skus/:skuId/lookup
+// Looks up the Shopify variant + inventory item ID for this SKU and stores it.
+// Must be called before inventory sync can work for a given SKU.
+router.post('/suppliers/:id/skus/:skuId/lookup', adminOnly, async (req, res) => {
+  try {
+    const entry = skuDb.getSkuById(req.params.skuId);
+    if (!entry) return res.status(404).json({ error: 'SKU entry not found' });
+
+    console.log(`[API] Looking up Shopify variant for SKU "${entry.sku}"`);
+    const info = await getInventoryItemBySku(entry.sku);
+
+    if (!info) {
+      return res.status(404).json({
+        error: `No Shopify variant found with SKU "${entry.sku}". Check the SKU matches exactly in Shopify.`,
+      });
+    }
+
+    skuDb.updateSupplierSku(entry.id, {
+      product_title:             info.productTitle,
+      shopify_variant_id:        info.variantId,
+      shopify_inventory_item_id: info.inventoryItemId,
+    });
+
+    console.log(`[API] SKU "${entry.sku}" → variantId=${info.variantId} inventoryItemId=${info.inventoryItemId}`);
+    res.json({ success: true, ...info });
+  } catch (err) {
+    console.error('[API] POST /suppliers/:id/skus/:skuId/lookup error:', err.message);
+    res.status(502).json({ error: err.message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SUPPLIER INVENTORY SYNC  (admin only)
+// Syncs all SKU stock quantities for a supplier to Shopify at their location.
+// ══════════════════════════════════════════════════════════════════════════════
+
+// POST /api/suppliers/:id/inventory/sync
+// Syncs every SKU that has both shopify_inventory_item_id and a location.
+router.post('/suppliers/:id/inventory/sync', adminOnly, async (req, res) => {
+  try {
+    const supplier = suppDb.getSupplierById(req.params.id);
+    if (!supplier) return res.status(404).json({ error: 'Supplier not found' });
+
+    if (!supplier.shopify_location_id) {
+      return res.status(400).json({
+        error: 'Supplier has no Shopify location. Run "Create Shopify Location" first.',
+      });
+    }
+
+    const skus = skuDb.getSkusForSupplier(supplier.id);
+    const results = { synced: [], skipped: [], failed: [] };
+
+    for (const entry of skus) {
+      if (!entry.shopify_inventory_item_id) {
+        results.skipped.push({ sku: entry.sku, reason: 'No inventory item ID — run Lookup first' });
+        continue;
+      }
+      try {
+        await setInventoryLevel(
+          entry.shopify_inventory_item_id,
+          supplier.shopify_location_id,
+          entry.stock_quantity
+        );
+        skuDb.updateStock(entry.id, entry.stock_quantity, new Date().toISOString());
+        results.synced.push({ sku: entry.sku, quantity: entry.stock_quantity });
+        console.log(`[API] Synced inventory: ${entry.sku} = ${entry.stock_quantity} at location ${supplier.shopify_location_id}`);
+      } catch (syncErr) {
+        console.error(`[API] Inventory sync failed for SKU ${entry.sku}:`, syncErr.message);
+        results.failed.push({ sku: entry.sku, error: syncErr.message });
+      }
+    }
+
+    res.json({ success: true, supplier_id: supplier.id, ...results });
+  } catch (err) {
+    console.error('[API] POST /suppliers/:id/inventory/sync error:', err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 

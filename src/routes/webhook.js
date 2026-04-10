@@ -416,6 +416,14 @@ router.post('/fulfillments/update', verifyShopifyWebhook, (req, res) => {
   console.log(`[Webhook] fulfillment updated: order ${orderNum}`);
 });
 
+// ── fulfillment-service callback ──────────────────────────────────────────────
+// Shopify calls this URL when a fulfillment service event occurs.
+// We set inventory_management:false so Shopify won't poll us for stock data,
+// but the callback URL must still be reachable. This stub always returns 200.
+router.post('/fulfillment-service', (req, res) => {
+  res.status(200).json({ ok: true });
+});
+
 // ── Shopify webhook health check ──────────────────────────────────────────────
 // Shopify sometimes sends a test ping
 router.post('/ping', verifyShopifyWebhook, (req, res) => {

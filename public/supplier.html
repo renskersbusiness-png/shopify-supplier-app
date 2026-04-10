@@ -87,6 +87,22 @@
     .empty { text-align: center; padding: 60px 20px; color: #9ca3af; }
     .empty-icon { font-size: 40px; margin-bottom: 12px; }
     .empty h3 { font-size: 15px; color: #6b7280; margin-bottom: 6px; }
+
+    /* View switcher */
+    .view-tabs { display: flex; gap: 4px; margin-bottom: 24px; background: white; border: 1px solid #e5e7eb; border-radius: 10px; padding: 6px; width: fit-content; }
+    .view-tab { padding: 7px 18px; border-radius: 7px; font-size: 13px; font-weight: 500; border: none; background: none; color: #6b7280; transition: all 0.12s; }
+    .view-tab:hover { background: #f3f4f6; }
+    .view-tab.active { background: #6366f1; color: white; }
+
+    /* Inventory table */
+    .inv-table { width: 100%; border-collapse: collapse; background: white; border: 1px solid #e5e7eb; border-radius: 10px; overflow: hidden; }
+    .inv-table th { padding: 10px 14px; text-align: left; font-size: 11px; font-weight: 600; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.04em; background: #f9fafb; border-bottom: 1px solid #e5e7eb; }
+    .inv-table td { padding: 11px 14px; border-bottom: 1px solid #f3f4f6; font-size: 13px; vertical-align: middle; }
+    .inv-table tr:last-child td { border-bottom: none; }
+    .inv-table tr:hover td { background: #fafafa; }
+    .inv-qty-input { width: 80px; padding: 6px 8px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px; text-align: center; outline: none; }
+    .inv-qty-input:focus { border-color: #6366f1; }
+    .synced-at { font-size: 11px; color: #9ca3af; }
   </style>
 </head>
 <body>
@@ -104,24 +120,52 @@
 
 <div class="content">
 
-  <!-- Stats -->
-  <div class="stats-row" id="stats-row">
-    <div class="stat-card"><div class="stat-label">Assigned</div><div class="stat-value" id="stat-assigned">—</div></div>
-    <div class="stat-card"><div class="stat-label">Tracking Added</div><div class="stat-value" id="stat-tracking">—</div></div>
-    <div class="stat-card"><div class="stat-label">Fulfilled</div><div class="stat-value" id="stat-fulfilled">—</div></div>
+  <!-- View switcher -->
+  <div class="view-tabs">
+    <button class="view-tab active" id="view-tab-orders" onclick="showView('orders', this)">📋 Orders</button>
+    <button class="view-tab" id="view-tab-inventory" onclick="showView('inventory', this)">📦 Inventory</button>
   </div>
 
-  <!-- Filter tabs -->
-  <div class="filter-tabs">
-    <button class="filter-tab active" onclick="setFilter('', this)">All</button>
-    <button class="filter-tab" onclick="setFilter('assigned', this)">To Do</button>
-    <button class="filter-tab" onclick="setFilter('tracking_added', this)">Tracking Added</button>
-    <button class="filter-tab" onclick="setFilter('fulfilled', this)">Fulfilled</button>
+  <!-- ── Orders view ─────────────────────────────────────────────────────── -->
+  <div id="view-orders">
+    <!-- Stats -->
+    <div class="stats-row" id="stats-row">
+      <div class="stat-card"><div class="stat-label">Assigned</div><div class="stat-value" id="stat-assigned">—</div></div>
+      <div class="stat-card"><div class="stat-label">Tracking Added</div><div class="stat-value" id="stat-tracking">—</div></div>
+      <div class="stat-card"><div class="stat-label">Fulfilled</div><div class="stat-value" id="stat-fulfilled">—</div></div>
+    </div>
+
+    <!-- Filter tabs -->
+    <div class="filter-tabs">
+      <button class="filter-tab active" onclick="setFilter('', this)">All</button>
+      <button class="filter-tab" onclick="setFilter('assigned', this)">To Do</button>
+      <button class="filter-tab" onclick="setFilter('tracking_added', this)">Tracking Added</button>
+      <button class="filter-tab" onclick="setFilter('fulfilled', this)">Fulfilled</button>
+    </div>
+
+    <!-- Orders list -->
+    <div id="orders-list">
+      <div style="text-align:center;padding:40px;color:#9ca3af">Loading…</div>
+    </div>
   </div>
 
-  <!-- Orders list -->
-  <div id="orders-list">
-    <div style="text-align:center;padding:40px;color:#9ca3af">Loading…</div>
+  <!-- ── Inventory view ──────────────────────────────────────────────────── -->
+  <div id="view-inventory" style="display:none">
+    <div id="inv-location-warning" style="display:none" class="warn-box">
+      ⚠️ No Shopify location configured for your account. Stock updates will be saved locally, but you cannot sync to Shopify until an admin sets up your fulfillment location. Please contact your admin.
+    </div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+      <div>
+        <div style="font-size:16px;font-weight:700">Your Inventory</div>
+        <div style="font-size:13px;color:#6b7280;margin-top:2px">Update stock quantities and sync to Shopify.</div>
+      </div>
+      <button class="btn btn-primary btn-sm" id="sync-all-btn" onclick="syncAllInventory(this)" style="display:none">
+        ↑ Sync All to Shopify
+      </button>
+    </div>
+    <div id="inv-list">
+      <div style="text-align:center;padding:40px;color:#9ca3af">Loading…</div>
+    </div>
   </div>
 
 </div>
@@ -350,6 +394,176 @@ async function fulfillOrder(orderId, btn) {
     btn.disabled    = false;
     btn.textContent = '✅ Mark as Shipped in Shopify';
   }
+}
+
+// ── View switcher ───────────────────────────────────────────────────────────
+
+let invHasLocation = false;
+
+function showView(view, btn) {
+  document.querySelectorAll('.view-tab').forEach(t => t.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('view-orders').style.display    = view === 'orders'    ? '' : 'none';
+  document.getElementById('view-inventory').style.display = view === 'inventory' ? '' : 'none';
+  if (view === 'inventory') loadInventory();
+}
+
+// ── Inventory view ──────────────────────────────────────────────────────────
+
+// stock edits buffered here: skuId → qty (string)
+const invEdits = {};
+
+async function loadInventory() {
+  const list = document.getElementById('inv-list');
+  list.innerHTML = '<div style="text-align:center;padding:40px;color:#9ca3af">Loading…</div>';
+  try {
+    const r = await api('/api/supplier/inventory');
+    invHasLocation = r.has_shopify_location;
+
+    document.getElementById('inv-location-warning').style.display = invHasLocation ? 'none' : '';
+    document.getElementById('sync-all-btn').style.display = invHasLocation ? '' : 'none';
+
+    const skus = r.skus || [];
+    if (!skus.length) {
+      list.innerHTML = `<div class="empty"><div class="empty-icon">📦</div><h3>No SKUs assigned yet</h3><p style="font-size:13px">Ask your admin to add your product catalog.</p></div>`;
+      return;
+    }
+
+    list.innerHTML = `
+      <table class="inv-table">
+        <thead>
+          <tr>
+            <th>SKU</th>
+            <th>Product</th>
+            <th style="width:110px">Stock Qty</th>
+            <th style="width:130px">Last Synced</th>
+            <th style="width:160px">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="inv-tbody">
+          ${skus.map(s => renderSkuRow(s)).join('')}
+        </tbody>
+      </table>
+    `;
+  } catch(e) {
+    list.innerHTML = `<div style="color:#ef4444;padding:20px;text-align:center">Error: ${esc(e.message)}</div>`;
+  }
+}
+
+function renderSkuRow(s) {
+  const currentQty = invEdits[s.id] !== undefined ? invEdits[s.id] : s.stock_quantity;
+  const canSync    = invHasLocation && !!s.shopify_inventory_item_id;
+  const syncTitle  = !invHasLocation ? 'No Shopify location configured' : !s.shopify_inventory_item_id ? 'SKU not linked to Shopify — ask admin to run a lookup' : '';
+  const syncedAt   = s.last_synced_at ? `<div class="synced-at">Synced ${fmtDate(s.last_synced_at)}</div>` : `<div class="synced-at" style="color:#d97706">Not yet synced</div>`;
+  return `
+    <tr id="inv-row-${s.id}">
+      <td><strong>${esc(s.sku)}</strong></td>
+      <td>${esc(s.product_title || '—')}</td>
+      <td>
+        <input type="number" min="0" class="inv-qty-input" id="qty-${s.id}"
+          value="${esc(currentQty)}"
+          oninput="invEdits[${s.id}]=this.value">
+      </td>
+      <td>${syncedAt}</td>
+      <td style="display:flex;gap:6px;flex-wrap:wrap">
+        <button class="btn btn-secondary btn-sm" onclick="saveStock(${s.id}, this)" id="save-btn-${s.id}">Save</button>
+        <button class="btn btn-primary btn-sm" onclick="syncStock(${s.id}, this)" id="sync-btn-${s.id}"
+          ${canSync ? '' : `disabled title="${esc(syncTitle)}"`}>↑ Sync</button>
+      </td>
+    </tr>
+  `;
+}
+
+async function saveStock(skuId, btn) {
+  const input = document.getElementById('qty-' + skuId);
+  const qty   = parseInt(input.value, 10);
+  if (isNaN(qty) || qty < 0) { toast('Enter a valid non-negative number', 'error'); return; }
+
+  btn.disabled    = true;
+  btn.textContent = '…';
+  try {
+    await api(`/api/supplier/inventory/${skuId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ stock_quantity: qty }),
+    });
+    invEdits[skuId] = qty;
+    toast('Stock saved locally', 'success');
+  } catch(e) {
+    toast(e.message, 'error');
+  } finally {
+    btn.disabled    = false;
+    btn.textContent = 'Save';
+  }
+}
+
+async function syncStock(skuId, btn) {
+  btn.disabled    = true;
+  btn.textContent = '…';
+  try {
+    // Save current input value first
+    const input = document.getElementById('qty-' + skuId);
+    const qty   = parseInt(input.value, 10);
+    if (!isNaN(qty) && qty >= 0) {
+      await api(`/api/supplier/inventory/${skuId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ stock_quantity: qty }),
+      });
+    }
+
+    const r = await api(`/api/supplier/inventory/${skuId}/sync`, { method: 'POST' });
+    invEdits[skuId] = r.stock_quantity;
+
+    // Update synced_at in row without full reload
+    const row = document.getElementById('inv-row-' + skuId);
+    if (row) {
+      const syncedCell = row.querySelectorAll('td')[3];
+      syncedCell.innerHTML = `<div class="synced-at">Synced ${fmtDate(r.synced_at)}</div>`;
+    }
+    toast(`Synced ${r.stock_quantity} units to Shopify`, 'success');
+  } catch(e) {
+    toast(e.message, 'error');
+  } finally {
+    btn.disabled    = false;
+    btn.textContent = '↑ Sync';
+  }
+}
+
+async function syncAllInventory(btn) {
+  if (!confirm('Sync all SKUs to Shopify using the currently saved stock quantities?')) return;
+  btn.disabled    = true;
+  btn.textContent = 'Syncing…';
+
+  // Save any pending edits first, then trigger per-SKU syncs
+  const rows = document.querySelectorAll('#inv-tbody tr');
+  let synced = 0, skipped = 0, failed = 0;
+  for (const row of rows) {
+    const id = row.id.replace('inv-row-', '');
+    if (!id) continue;
+    const syncBtn = document.getElementById('sync-btn-' + id);
+    if (!syncBtn || syncBtn.disabled) { skipped++; continue; }
+    try {
+      const input = document.getElementById('qty-' + id);
+      const qty   = parseInt(input?.value, 10);
+      if (!isNaN(qty) && qty >= 0) {
+        await api(`/api/supplier/inventory/${id}`, { method: 'PATCH', body: JSON.stringify({ stock_quantity: qty }) });
+      }
+      const r = await api(`/api/supplier/inventory/${id}/sync`, { method: 'POST' });
+      const syncedCell = row.querySelectorAll('td')[3];
+      if (syncedCell) syncedCell.innerHTML = `<div class="synced-at">Synced ${fmtDate(r.synced_at)}</div>`;
+      synced++;
+    } catch(e) {
+      failed++;
+    }
+  }
+
+  btn.disabled    = false;
+  btn.textContent = '↑ Sync All to Shopify';
+
+  const parts = [];
+  if (synced)  parts.push(`${synced} synced`);
+  if (skipped) parts.push(`${skipped} skipped`);
+  if (failed)  parts.push(`${failed} failed`);
+  toast(parts.join(', ') || 'Nothing to sync', failed ? 'error' : 'success');
 }
 </script>
 </body>

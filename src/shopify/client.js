@@ -458,6 +458,174 @@ async function createFulfillmentForLineItems(shopifyOrderId, shopifyLineItemIds,
   return result.fulfillment;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Fulfillment Service + Inventory management
+//
+// REQUIRED SHOPIFY APP SCOPES (add in Partner Dashboard → App → Configuration):
+//   write_fulfillments   ← create / manage fulfillment services
+//   read_products        ← look up product variants by SKU
+//   read_inventory       ← read inventory levels
+//   write_inventory      ← set inventory quantities at a location
+//
+// After adding scopes: uninstall and reinstall the app to reauthorize.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * createFulfillmentService(supplierName)
+ * Creates a Shopify Fulfillment Service for a supplier and returns the
+ * service ID + the auto-created location ID.
+ *
+ * The location ID is what we reference when setting inventory levels.
+ * inventory_management:false means Shopify will NOT poll our callback URL
+ * for inventory data — we push inventory to Shopify instead.
+ */
+async function createFulfillmentService(supplierName) {
+  const token    = await getAccessToken();
+  const appUrl   = process.env.APP_URL || 'http://localhost:3000';
+  const safeName = supplierName.trim().substring(0, 50);
+
+  console.log(`[Shopify] Creating fulfillment service for "${safeName}"`);
+
+  const res = await fetch(
+    `https://${SHOPIFY_DOMAIN}/admin/api/${API_VERSION}/fulfillment_services.json`,
+    {
+      method:  'POST',
+      headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        fulfillment_service: {
+          name:                     `${safeName} Warehouse`,
+          callback_url:             `${appUrl}/webhooks/fulfillment-service`,
+          inventory_management:     false, // we push inventory; Shopify won't poll us
+          tracking_support:         false, // we push fulfillments via API directly
+          requires_shipping_method: false,
+          format:                   'json',
+        },
+      }),
+    }
+  );
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Shopify fulfillment service creation failed (${res.status}): ${text}`);
+  }
+
+  const { fulfillment_service } = await res.json();
+  console.log(`[Shopify] Fulfillment service created: id=${fulfillment_service.id} location_id=${fulfillment_service.location_id}`);
+
+  return {
+    serviceId:  String(fulfillment_service.id),
+    locationId: String(fulfillment_service.location_id),
+    name:       fulfillment_service.name,
+  };
+}
+
+/**
+ * getInventoryItemBySku(sku)
+ * Looks up the Shopify product variant and inventory item ID for a given SKU.
+ * Returns null if no variant with that exact SKU exists.
+ * Scope required: read_products
+ */
+async function getInventoryItemBySku(sku) {
+  const query = `
+    query findBySku($q: String!) {
+      productVariants(first: 5, query: $q) {
+        nodes {
+          id
+          sku
+          displayName
+          inventoryItem {
+            id
+          }
+        }
+      }
+    }
+  `;
+
+  const data  = await shopifyGraphQL(query, { q: `sku:'${sku}'` });
+  const nodes = data.productVariants?.nodes || [];
+
+  // GraphQL search can return partial matches — enforce exact SKU comparison
+  const exact = nodes.find(v => v.sku === sku);
+  if (!exact) return null;
+
+  return {
+    variantId:        exact.id.split('/').pop(),
+    productTitle:     exact.displayName || null,
+    inventoryItemId:  exact.inventoryItem?.id?.split('/').pop() || null,
+  };
+}
+
+/**
+ * activateInventoryAtLocation(inventoryItemId, locationId)
+ * Connects an inventory item to a location so it can be tracked there.
+ * Must be called before setInventoryLevel for a new location.
+ * Safe to call repeatedly — 422 (already connected) is treated as success.
+ * Scope required: write_inventory
+ */
+async function activateInventoryAtLocation(inventoryItemId, locationId) {
+  const token = await getAccessToken();
+
+  const res = await fetch(
+    `https://${SHOPIFY_DOMAIN}/admin/api/${API_VERSION}/inventory_levels/connect.json`,
+    {
+      method:  'POST',
+      headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        location_id:           Number(locationId),
+        inventory_item_id:     Number(inventoryItemId),
+        relocate_if_necessary: false,
+      }),
+    }
+  );
+
+  if (res.status === 422) {
+    // Already connected — not an error
+    console.log(`[Shopify] Inventory item ${inventoryItemId} already active at location ${locationId}`);
+    return;
+  }
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Failed to connect inventory item ${inventoryItemId} to location ${locationId} (${res.status}): ${text}`);
+  }
+
+  console.log(`[Shopify] Inventory item ${inventoryItemId} connected to location ${locationId}`);
+}
+
+/**
+ * setInventoryLevel(inventoryItemId, locationId, quantity)
+ * Sets the absolute "available" quantity for an inventory item at a location.
+ * Automatically activates the item at the location if not already tracked.
+ * Scope required: write_inventory
+ */
+async function setInventoryLevel(inventoryItemId, locationId, quantity) {
+  // Ensure the item is tracked at this location first
+  await activateInventoryAtLocation(inventoryItemId, locationId);
+
+  const token = await getAccessToken();
+
+  const res = await fetch(
+    `https://${SHOPIFY_DOMAIN}/admin/api/${API_VERSION}/inventory_levels/set.json`,
+    {
+      method:  'POST',
+      headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        location_id:       Number(locationId),
+        inventory_item_id: Number(inventoryItemId),
+        available:         Number(quantity),
+      }),
+    }
+  );
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Failed to set inventory level (${res.status}): ${text}`);
+  }
+
+  const { inventory_level } = await res.json();
+  console.log(`[Shopify] Inventory set: item=${inventoryItemId} location=${locationId} available=${inventory_level.available}`);
+  return inventory_level;
+}
+
 module.exports = {
   shopifyGraphQL,
   getFulfillmentOrders,
@@ -466,4 +634,8 @@ module.exports = {
   createFulfillmentForLineItems,
   syncRecentOrders,
   fetchOrderFromShopify,
+  createFulfillmentService,
+  getInventoryItemBySku,
+  activateInventoryAtLocation,
+  setInventoryLevel,
 };

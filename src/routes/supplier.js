@@ -12,7 +12,9 @@ const { requireSupplierSession } = require('../middleware/auth');
 const asgDb = require('../db/assignments');
 const { updateAssignmentTracking, markGroupFulfilled } = require('../db/assignments');
 const { getOrderById, logActivity }     = require('../db/orders');
-const { createFulfillmentForLineItems } = require('../shopify/client');
+const { getSupplierById }               = require('../db/suppliers');
+const skuDb                             = require('../db/supplier_skus');
+const { createFulfillmentForLineItems, setInventoryLevel } = require('../shopify/client');
 
 // All routes here require a supplier session
 router.use(requireSupplierSession);
@@ -184,6 +186,103 @@ router.post('/fulfill', async (req, res) => {
   } catch (err) {
     console.error('[fulfillment] failed → unexpected error:', err.message, err);
     res.status(500).json({ error: err.message || 'Fulfillment failed' });
+  }
+});
+
+// ── GET /api/supplier/inventory ───────────────────────────────────────────────
+// Returns all SKUs assigned to this supplier's catalog with current stock.
+
+router.get('/inventory', (req, res) => {
+  try {
+    const supplierId = req.session.supplierId;
+    const supplier   = getSupplierById(supplierId);
+    if (!supplier) return res.status(404).json({ error: 'Supplier not found' });
+
+    const skus = skuDb.getSkusForSupplier(supplierId).map(s => ({
+      id:                        s.id,
+      sku:                       s.sku,
+      product_title:             s.product_title,
+      stock_quantity:            s.stock_quantity,
+      shopify_inventory_item_id: s.shopify_inventory_item_id,
+      last_synced_at:            s.last_synced_at,
+      notes:                     s.notes,
+    }));
+
+    res.json({
+      skus,
+      has_shopify_location: !!supplier.shopify_location_id,
+    });
+  } catch (err) {
+    console.error('[Supplier API] GET /inventory error:', err);
+    res.status(500).json({ error: 'Failed to fetch inventory' });
+  }
+});
+
+// ── PATCH /api/supplier/inventory/:id ─────────────────────────────────────────
+// Supplier updates their local stock quantity for a SKU.
+// Does NOT push to Shopify — use POST /sync for that.
+
+router.patch('/inventory/:id', (req, res) => {
+  try {
+    const supplierId = req.session.supplierId;
+    const entry      = skuDb.getSkuById(req.params.id);
+
+    if (!entry) return res.status(404).json({ error: 'SKU not found' });
+    if (entry.supplier_id !== supplierId) return res.status(403).json({ error: 'Forbidden' });
+
+    const { stock_quantity } = req.body;
+    if (stock_quantity === undefined || stock_quantity === null) {
+      return res.status(400).json({ error: 'stock_quantity is required' });
+    }
+    const qty = parseInt(stock_quantity, 10);
+    if (isNaN(qty) || qty < 0) {
+      return res.status(400).json({ error: 'stock_quantity must be a non-negative integer' });
+    }
+
+    skuDb.updateStock(entry.id, qty);
+    console.log(`[inventory] supplier=${supplierId} sku=${entry.sku} stock=${qty} (local save)`);
+    res.json({ success: true, sku: entry.sku, stock_quantity: qty });
+  } catch (err) {
+    console.error('[Supplier API] PATCH /inventory/:id error:', err);
+    res.status(500).json({ error: 'Failed to update stock' });
+  }
+});
+
+// ── POST /api/supplier/inventory/:id/sync ─────────────────────────────────────
+// Pushes the locally stored stock for one SKU to Shopify at the supplier's location.
+
+router.post('/inventory/:id/sync', async (req, res) => {
+  try {
+    const supplierId = req.session.supplierId;
+    const supplier   = getSupplierById(supplierId);
+    const entry      = skuDb.getSkuById(req.params.id);
+
+    if (!entry) return res.status(404).json({ error: 'SKU not found' });
+    if (entry.supplier_id !== supplierId) return res.status(403).json({ error: 'Forbidden' });
+
+    if (!supplier.shopify_location_id) {
+      return res.status(400).json({ error: 'No Shopify location configured for your account. Ask an admin to create one.' });
+    }
+    if (!entry.shopify_inventory_item_id) {
+      return res.status(400).json({ error: 'This SKU has not been linked to a Shopify product yet. Ask an admin to run a lookup.' });
+    }
+
+    console.log(`[inventory] syncing sku=${entry.sku} qty=${entry.stock_quantity} → location=${supplier.shopify_location_id}`);
+
+    await setInventoryLevel(
+      entry.shopify_inventory_item_id,
+      supplier.shopify_location_id,
+      entry.stock_quantity
+    );
+
+    const syncedAt = new Date().toISOString();
+    skuDb.updateStock(entry.id, entry.stock_quantity, syncedAt);
+
+    console.log(`[inventory] synced successfully sku=${entry.sku} qty=${entry.stock_quantity}`);
+    res.json({ success: true, sku: entry.sku, stock_quantity: entry.stock_quantity, synced_at: syncedAt });
+  } catch (err) {
+    console.error(`[inventory] sync failed → ${err.message}`);
+    res.status(502).json({ error: err.message });
   }
 });
 

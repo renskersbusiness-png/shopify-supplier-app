@@ -52,6 +52,18 @@ function deleteSupplier(id) {
   return getDb().prepare('DELETE FROM suppliers WHERE id = ?').run(id);
 }
 
+/**
+ * updateSupplierShopifyIds — store the Shopify fulfillment service ID and
+ * the linked location ID after a successful createFulfillmentService() call.
+ */
+function updateSupplierShopifyIds(id, { shopify_service_id, shopify_location_id }) {
+  return getDb().prepare(`
+    UPDATE suppliers
+    SET shopify_service_id = ?, shopify_location_id = ?
+    WHERE id = ?
+  `).run(shopify_service_id || null, shopify_location_id || null, id);
+}
+
 module.exports = {
   createSupplier,
   getAllSuppliers,
@@ -60,4 +72,5 @@ module.exports = {
   updateSupplier,
   rotateToken,
   deleteSupplier,
+  updateSupplierShopifyIds,
 };

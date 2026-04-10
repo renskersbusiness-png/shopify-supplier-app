@@ -194,6 +194,9 @@
     <button class="nav-item" onclick="showTab('assignments', this)">
       <span class="icon">📋</span><span>Assignments</span>
     </button>
+    <button class="nav-item" onclick="showTab('inventory', this)">
+      <span class="icon">📦</span><span>Inventory</span>
+    </button>
   </nav>
   <div class="sidebar-footer">
     <form method="POST" action="/logout" style="margin:0">
@@ -338,6 +341,53 @@
       </div>
     </div>
 
+    <!-- ── INVENTORY TAB ─────────────────────────────────────────────────── -->
+    <div id="tab-inventory" class="tab-content">
+      <div class="info-box" style="margin-bottom:18px">
+        Manage Shopify fulfillment locations and SKU inventory per supplier.
+        Each supplier needs a <strong>Shopify Location</strong> before inventory can be synced.
+        After creating a location, add SKUs and run <strong>Lookup</strong> to link them to Shopify product variants.
+      </div>
+
+      <div class="toolbar">
+        <select id="inv-supplier-select" onchange="loadInventoryForSupplier(this.value)"
+          style="padding:8px 10px;border:1px solid #d1d5db;border-radius:8px;font-size:13px;background:white;outline:none;min-width:220px">
+          <option value="">— Select a supplier —</option>
+        </select>
+        <button class="btn btn-success btn-sm" id="inv-sync-all-btn" onclick="syncAllInventory()" style="display:none">
+          ↑ Sync All to Shopify
+        </button>
+      </div>
+
+      <div id="inv-location-section" style="display:none;margin-bottom:18px">
+        <div id="inv-location-status"></div>
+      </div>
+
+      <div id="inv-sku-section" style="display:none">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+          <h3 style="font-size:14px;font-weight:600">SKU Catalog</h3>
+          <button class="btn btn-primary btn-sm" onclick="openAddSkuDialog()">+ Add SKU</button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>SKU</th>
+                <th>Product</th>
+                <th>Inventory Item ID</th>
+                <th>Stock</th>
+                <th>Last Synced</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="inv-skus-tbody">
+              <tr><td colspan="6" style="text-align:center;padding:30px;color:#9ca3af">Select a supplier above</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
   </div><!-- /content -->
 </main>
 
@@ -425,6 +475,29 @@
     <div class="dialog-footer">
       <button class="btn btn-secondary" onclick="closeReassignDialog()">Cancel</button>
       <button class="btn btn-primary" onclick="confirmReassign()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Add SKU Dialog ─────────────────────────────────────────────────────── -->
+<div class="dialog-backdrop" id="add-sku-dialog" onclick="if(event.target===this)closeAddSkuDialog()">
+  <div class="dialog">
+    <h3>Add SKU to Supplier</h3>
+    <div class="form-group">
+      <label>SKU *</label>
+      <input type="text" id="new-sku-value" placeholder="e.g. PROJ-X200-BLK-4K" style="text-transform:uppercase">
+    </div>
+    <div class="form-group">
+      <label>Product Title <span style="color:#9ca3af">(optional — auto-filled by Lookup)</span></label>
+      <input type="text" id="new-sku-title" placeholder="e.g. Ultra HD 4K Projector">
+    </div>
+    <div class="form-group">
+      <label>Notes <span style="color:#9ca3af">(optional)</span></label>
+      <input type="text" id="new-sku-notes" placeholder="Internal notes…">
+    </div>
+    <div class="dialog-footer">
+      <button class="btn btn-secondary" onclick="closeAddSkuDialog()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveNewSku()">Add SKU</button>
     </div>
   </div>
 </div>
@@ -999,6 +1072,205 @@ async function confirmReassign() {
     toast('Assignment updated', 'success');
     closeReassignDialog();
     loadAssignments();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// INVENTORY TAB
+// ══════════════════════════════════════════════════════════════════════════════
+
+let invSupplierId = null;
+
+function populateInvSupplierSelect() {
+  const sel  = document.getElementById('inv-supplier-select');
+  if (!sel) return;
+  const prev = sel.value;
+  sel.innerHTML = '<option value="">— Select a supplier —</option>' +
+    suppliers.map(s => `<option value="${s.id}"${s.id == prev ? ' selected' : ''}>${esc(s.name)}</option>`).join('');
+}
+
+async function loadInventoryTab() {
+  await loadSuppliersCache();
+  populateInvSupplierSelect();
+  if (invSupplierId) loadInventoryForSupplier(invSupplierId);
+}
+
+async function loadInventoryForSupplier(supplierId) {
+  invSupplierId = supplierId || null;
+  const locSection  = document.getElementById('inv-location-section');
+  const skuSection  = document.getElementById('inv-sku-section');
+  const syncAllBtn  = document.getElementById('inv-sync-all-btn');
+
+  if (!supplierId) {
+    locSection.style.display = 'none';
+    skuSection.style.display = 'none';
+    syncAllBtn.style.display = 'none';
+    return;
+  }
+
+  locSection.style.display = 'block';
+  skuSection.style.display = 'block';
+
+  const supplier = suppliers.find(s => s.id == supplierId);
+  renderLocationStatus(supplier);
+  await loadSkusForSupplier(supplierId);
+  syncAllBtn.style.display = 'inline-flex';
+}
+
+function renderLocationStatus(supplier) {
+  const el = document.getElementById('inv-location-status');
+  if (!supplier) { el.innerHTML = ''; return; }
+
+  if (supplier.shopify_location_id) {
+    el.innerHTML = `
+      <div class="success-box" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+        <div>
+          <strong>Shopify Location active</strong> &nbsp;·&nbsp;
+          Location ID: <code>${esc(supplier.shopify_location_id)}</code> &nbsp;·&nbsp;
+          Service ID: <code>${esc(supplier.shopify_service_id || '—')}</code>
+        </div>
+      </div>`;
+  } else {
+    el.innerHTML = `
+      <div class="warn-box" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+        <div>
+          <strong>No Shopify location yet.</strong>
+          Create one to enable inventory sync for this supplier.
+        </div>
+        <button class="btn btn-primary btn-sm" onclick="createLocation(${supplier.id}, this)">
+          + Create Shopify Location
+        </button>
+      </div>`;
+  }
+}
+
+async function createLocation(supplierId, btn) {
+  btn.disabled = true;
+  btn.textContent = 'Creating…';
+  try {
+    const r = await api(`/api/suppliers/${supplierId}/create-location`, { method: 'POST' });
+    toast(r.already_exists ? 'Location already exists' : 'Shopify location created!', 'success');
+    await loadSuppliersCache();       // refresh local suppliers cache
+    populateInvSupplierSelect();
+    loadInventoryForSupplier(supplierId);
+  } catch(e) {
+    toast(e.message, 'error');
+    btn.disabled = false;
+    btn.textContent = '+ Create Shopify Location';
+  }
+}
+
+async function loadSkusForSupplier(supplierId) {
+  const tbody = document.getElementById('inv-skus-tbody');
+  tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:20px;color:#9ca3af">Loading…</td></tr>';
+  try {
+    const r    = await api(`/api/suppliers/${supplierId}/skus`);
+    const skus = r.skus || [];
+    if (!skus.length) {
+      tbody.innerHTML = `<tr><td colspan="6"><div class="empty" style="padding:30px 0">
+        <div class="empty-icon">📦</div><h3>No SKUs yet</h3>
+        <p style="font-size:13px">Add SKUs this supplier stocks, then run Lookup to link to Shopify.</p>
+      </div></td></tr>`;
+      return;
+    }
+    tbody.innerHTML = skus.map(s => `
+      <tr>
+        <td><strong>${esc(s.sku)}</strong></td>
+        <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(s.product_title||'')}">
+          ${esc(s.product_title || '—')}
+        </td>
+        <td style="font-size:12px;color:#6b7280;font-family:monospace">
+          ${s.shopify_inventory_item_id
+            ? `<span style="color:#059669">${esc(s.shopify_inventory_item_id)}</span>`
+            : '<span style="color:#d97706">Not linked</span>'}
+        </td>
+        <td>
+          <strong>${s.stock_quantity}</strong>
+        </td>
+        <td style="font-size:12px;color:#9ca3af">
+          ${s.last_synced_at ? formatDate(s.last_synced_at) : '—'}
+        </td>
+        <td>
+          <div style="display:flex;gap:4px;flex-wrap:wrap">
+            ${!s.shopify_inventory_item_id
+              ? `<button class="btn btn-secondary btn-sm" onclick="lookupSku(${invSupplierId},${s.id},this)" title="Find this SKU in Shopify">🔍 Lookup</button>`
+              : `<button class="btn btn-secondary btn-sm" onclick="lookupSku(${invSupplierId},${s.id},this)" title="Re-link to Shopify">↻ Re-link</button>`}
+            <button class="btn btn-danger btn-sm" onclick="deleteSku(${invSupplierId},${s.id})">✕</button>
+          </div>
+        </td>
+      </tr>
+    `).join('');
+  } catch(e) {
+    tbody.innerHTML = `<tr><td colspan="6" style="color:#ef4444;padding:20px;text-align:center">Error: ${esc(e.message)}</td></tr>`;
+  }
+}
+
+async function lookupSku(supplierId, skuId, btn) {
+  btn.disabled = true;
+  const orig = btn.textContent;
+  btn.textContent = '…';
+  try {
+    const r = await api(`/api/suppliers/${supplierId}/skus/${skuId}/lookup`, { method: 'POST' });
+    toast(`Linked: variant ${r.variantId}, inventory item ${r.inventoryItemId}`, 'success');
+    await loadSkusForSupplier(supplierId);
+  } catch(e) {
+    toast(e.message, 'error');
+    btn.disabled = false;
+    btn.textContent = orig;
+  }
+}
+
+async function deleteSku(supplierId, skuId) {
+  if (!confirm('Remove this SKU from the supplier catalog?')) return;
+  try {
+    await api(`/api/suppliers/${supplierId}/skus/${skuId}`, { method: 'DELETE' });
+    toast('SKU removed', 'success');
+    loadSkusForSupplier(supplierId);
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function syncAllInventory() {
+  if (!invSupplierId) return;
+  const btn = document.getElementById('inv-sync-all-btn');
+  btn.disabled = true;
+  btn.textContent = 'Syncing…';
+  try {
+    const r = await api(`/api/suppliers/${invSupplierId}/inventory/sync`, { method: 'POST' });
+    const msg = `Synced: ${r.synced.length} · Skipped: ${r.skipped.length} · Failed: ${r.failed.length}`;
+    toast(msg, r.failed.length ? '' : 'success');
+    if (r.failed.length) console.warn('[Inventory] Sync failures:', r.failed);
+    loadSkusForSupplier(invSupplierId);
+  } catch(e) {
+    toast(e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '↑ Sync All to Shopify';
+  }
+}
+
+// Add SKU dialog
+function openAddSkuDialog() {
+  document.getElementById('new-sku-value').value = '';
+  document.getElementById('new-sku-title').value = '';
+  document.getElementById('new-sku-notes').value = '';
+  document.getElementById('add-sku-dialog').classList.add('open');
+}
+function closeAddSkuDialog() { document.getElementById('add-sku-dialog').classList.remove('open'); }
+
+async function saveNewSku() {
+  if (!invSupplierId) { toast('Select a supplier first', 'error'); return; }
+  const sku   = document.getElementById('new-sku-value').value.trim();
+  const title = document.getElementById('new-sku-title').value.trim();
+  const notes = document.getElementById('new-sku-notes').value.trim();
+  if (!sku) { toast('SKU is required', 'error'); return; }
+  try {
+    await api(`/api/suppliers/${invSupplierId}/skus`, {
+      method: 'POST',
+      body: JSON.stringify({ sku, product_title: title || null, notes: notes || null }),
+    });
+    toast('SKU added', 'success');
+    closeAddSkuDialog();
+    loadSkusForSupplier(invSupplierId);
   } catch(e) { toast(e.message, 'error'); }
 }
 </script>
