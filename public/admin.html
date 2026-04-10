@@ -343,11 +343,7 @@
 
     <!-- ── INVENTORY TAB ─────────────────────────────────────────────────── -->
     <div id="tab-inventory" class="tab-content">
-      <div class="info-box" style="margin-bottom:18px">
-        Manage Shopify fulfillment locations and SKU inventory per supplier.
-        Each supplier needs a <strong>Shopify Location</strong> before inventory can be synced.
-        After creating a location, add SKUs and run <strong>Lookup</strong> to link them to Shopify product variants.
-      </div>
+      <div id="inv-global-location"></div>
 
       <div class="toolbar">
         <select id="inv-supplier-select" onchange="loadInventoryForSupplier(this.value)"
@@ -357,10 +353,6 @@
         <button class="btn btn-success btn-sm" id="inv-sync-all-btn" onclick="syncAllInventory()" style="display:none">
           ↑ Sync All to Shopify
         </button>
-      </div>
-
-      <div id="inv-location-section" style="display:none;margin-bottom:18px">
-        <div id="inv-location-status"></div>
       </div>
 
       <div id="inv-sku-section" style="display:none">
@@ -530,7 +522,7 @@ function showTab(tab, btn) {
   document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
   document.getElementById('tab-' + tab).classList.add('active');
   btn.classList.add('active');
-  const titles = { orders: 'Orders', suppliers: 'Suppliers', rules: 'Assignment Rules', assignments: 'Line Item Assignments' };
+  const titles = { orders: 'Orders', suppliers: 'Suppliers', rules: 'Assignment Rules', assignments: 'Line Item Assignments', inventory: 'Inventory' };
   document.getElementById('page-title').textContent = titles[tab] || tab;
   refreshTab();
 }
@@ -540,6 +532,7 @@ function refreshTab() {
   if (currentTab === 'suppliers')   loadSuppliers();
   if (currentTab === 'rules')       loadRules();
   if (currentTab === 'assignments') loadAssignments();
+  if (currentTab === 'inventory')   loadInventoryTab();
 }
 
 // ─── API helper ───────────────────────────────────────────────────────────────
@@ -1092,71 +1085,75 @@ function populateInvSupplierSelect() {
 async function loadInventoryTab() {
   await loadSuppliersCache();
   populateInvSupplierSelect();
+  await loadGlobalLocation();
   if (invSupplierId) loadInventoryForSupplier(invSupplierId);
 }
 
 async function loadInventoryForSupplier(supplierId) {
   invSupplierId = supplierId || null;
-  const locSection  = document.getElementById('inv-location-section');
-  const skuSection  = document.getElementById('inv-sku-section');
-  const syncAllBtn  = document.getElementById('inv-sync-all-btn');
+  const skuSection = document.getElementById('inv-sku-section');
+  const syncAllBtn = document.getElementById('inv-sync-all-btn');
 
   if (!supplierId) {
-    locSection.style.display = 'none';
     skuSection.style.display = 'none';
     syncAllBtn.style.display = 'none';
     return;
   }
 
-  locSection.style.display = 'block';
   skuSection.style.display = 'block';
-
-  const supplier = suppliers.find(s => s.id == supplierId);
-  renderLocationStatus(supplier);
   await loadSkusForSupplier(supplierId);
   syncAllBtn.style.display = 'inline-flex';
 }
 
-function renderLocationStatus(supplier) {
-  const el = document.getElementById('inv-location-status');
-  if (!supplier) { el.innerHTML = ''; return; }
-
-  if (supplier.shopify_location_id) {
-    el.innerHTML = `
-      <div class="success-box" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
-        <div>
-          <strong>Shopify Location active</strong> &nbsp;·&nbsp;
-          Location ID: <code>${esc(supplier.shopify_location_id)}</code> &nbsp;·&nbsp;
-          Service ID: <code>${esc(supplier.shopify_service_id || '—')}</code>
-        </div>
-      </div>`;
-  } else {
-    el.innerHTML = `
-      <div class="warn-box" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
-        <div>
-          <strong>No Shopify location yet.</strong>
-          Create one to enable inventory sync for this supplier.
-        </div>
-        <button class="btn btn-primary btn-sm" onclick="createLocation(${supplier.id}, this)">
-          + Create Shopify Location
-        </button>
-      </div>`;
+async function loadGlobalLocation() {
+  const el = document.getElementById('inv-global-location');
+  if (!el) return;
+  try {
+    const r = await api('/api/inventory/location');
+    if (r.configured) {
+      el.innerHTML = `
+        <div style="background:#d1fae5;border:1px solid #6ee7b7;border-radius:8px;padding:10px 14px;font-size:13px;color:#065f46;margin-bottom:18px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+          <div>✅ <strong>Shared Shopify location active</strong> &nbsp;·&nbsp; Location ID: <code>${esc(r.location_id)}</code></div>
+        </div>`;
+    } else {
+      el.innerHTML = `
+        <div class="warn-box" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:18px">
+          <div><strong>No shared Shopify location configured.</strong> Click Create — the app creates a fulfillment service in Shopify and returns a Location ID. Save that ID as <code>SHOPIFY_LOCATION_ID</code> in Railway, then redeploy.</div>
+          <button class="btn btn-primary btn-sm" onclick="createSharedLocation(this)">+ Create Shared Location</button>
+        </div>`;
+    }
+  } catch(e) {
+    el.innerHTML = `<div class="warn-box" style="margin-bottom:18px">Could not check location status: ${esc(e.message)}</div>`;
   }
 }
 
-async function createLocation(supplierId, btn) {
+async function createSharedLocation(btn) {
   btn.disabled = true;
   btn.textContent = 'Creating…';
   try {
-    const r = await api(`/api/suppliers/${supplierId}/create-location`, { method: 'POST' });
-    toast(r.already_exists ? 'Location already exists' : 'Shopify location created!', 'success');
-    await loadSuppliersCache();       // refresh local suppliers cache
-    populateInvSupplierSelect();
-    loadInventoryForSupplier(supplierId);
+    const r = await api('/api/inventory/setup-location', { method: 'POST' });
+    if (r.already_configured) {
+      toast('Already configured — check SHOPIFY_LOCATION_ID in Railway', 'success');
+      await loadGlobalLocation();
+      return;
+    }
+    const el = document.getElementById('inv-global-location');
+    if (el) {
+      el.innerHTML = `
+        <div class="info-box" style="margin-bottom:18px">
+          <strong>Location created!</strong> Copy this Location ID and set it as <code>SHOPIFY_LOCATION_ID</code> in your Railway environment variables, then redeploy.<br>
+          <div style="display:flex;align-items:center;gap:8px;margin-top:8px;background:#dbeafe;padding:8px 12px;border-radius:6px;font-family:monospace">
+            <span style="flex:1">${esc(r.location_id)}</span>
+            <button class="btn btn-secondary btn-sm" onclick="navigator.clipboard.writeText('${esc(r.location_id)}').then(()=>toast('Copied!','success'))">Copy</button>
+          </div>
+          <div style="margin-top:6px;font-size:12px;color:#6b7280">Service: <strong>${esc(r.service_name)}</strong> · Service ID: <code>${esc(r.service_id)}</code></div>
+        </div>`;
+    }
+    toast('Shopify location created — save the Location ID in Railway', 'success');
   } catch(e) {
     toast(e.message, 'error');
     btn.disabled = false;
-    btn.textContent = '+ Create Shopify Location';
+    btn.textContent = '+ Create Shared Location';
   }
 }
 

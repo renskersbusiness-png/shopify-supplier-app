@@ -423,19 +423,20 @@ router.post('/suppliers/:id/skus/:skuId/lookup', adminOnly, async (req, res) => 
 // ══════════════════════════════════════════════════════════════════════════════
 
 // POST /api/suppliers/:id/inventory/sync
-// Syncs every SKU that has both shopify_inventory_item_id and a location.
+// Syncs every SKU for this supplier to the shared Shopify location (SHOPIFY_LOCATION_ID).
 router.post('/suppliers/:id/inventory/sync', adminOnly, async (req, res) => {
   try {
-    const supplier = suppDb.getSupplierById(req.params.id);
+    const supplier   = suppDb.getSupplierById(req.params.id);
     if (!supplier) return res.status(404).json({ error: 'Supplier not found' });
 
-    if (!supplier.shopify_location_id) {
+    const locationId = process.env.SHOPIFY_LOCATION_ID;
+    if (!locationId) {
       return res.status(400).json({
-        error: 'Supplier has no Shopify location. Run "Create Shopify Location" first.',
+        error: 'SHOPIFY_LOCATION_ID is not configured. Set it in Railway env vars and redeploy.',
       });
     }
 
-    const skus = skuDb.getSkusForSupplier(supplier.id);
+    const skus    = skuDb.getSkusForSupplier(supplier.id);
     const results = { synced: [], skipped: [], failed: [] };
 
     for (const entry of skus) {
@@ -444,14 +445,10 @@ router.post('/suppliers/:id/inventory/sync', adminOnly, async (req, res) => {
         continue;
       }
       try {
-        await setInventoryLevel(
-          entry.shopify_inventory_item_id,
-          supplier.shopify_location_id,
-          entry.stock_quantity
-        );
+        await setInventoryLevel(entry.shopify_inventory_item_id, locationId, entry.stock_quantity);
         skuDb.updateStock(entry.id, entry.stock_quantity, new Date().toISOString());
         results.synced.push({ sku: entry.sku, quantity: entry.stock_quantity });
-        console.log(`[API] Synced inventory: ${entry.sku} = ${entry.stock_quantity} at location ${supplier.shopify_location_id}`);
+        console.log(`[API] Synced inventory: ${entry.sku} = ${entry.stock_quantity} at location ${locationId}`);
       } catch (syncErr) {
         console.error(`[API] Inventory sync failed for SKU ${entry.sku}:`, syncErr.message);
         results.failed.push({ sku: entry.sku, error: syncErr.message });
@@ -462,6 +459,42 @@ router.post('/suppliers/:id/inventory/sync', adminOnly, async (req, res) => {
   } catch (err) {
     console.error('[API] POST /suppliers/:id/inventory/sync error:', err.message);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SHARED SHOPIFY LOCATION  (admin only)
+// One location is shared across all suppliers. The location ID is stored as
+// SHOPIFY_LOCATION_ID in the Railway environment variables.
+// ══════════════════════════════════════════════════════════════════════════════
+
+// GET /api/inventory/location — returns whether SHOPIFY_LOCATION_ID is configured
+router.get('/inventory/location', adminOnly, (_req, res) => {
+  const locationId = process.env.SHOPIFY_LOCATION_ID;
+  res.json({ configured: !!locationId, location_id: locationId || null });
+});
+
+// POST /api/inventory/setup-location
+// Creates a single shared Shopify Fulfillment Service (and its linked Location).
+// Run this once. Copy the returned location_id and set SHOPIFY_LOCATION_ID in Railway.
+router.post('/inventory/setup-location', adminOnly, async (_req, res) => {
+  try {
+    if (process.env.SHOPIFY_LOCATION_ID) {
+      return res.json({ already_configured: true, location_id: process.env.SHOPIFY_LOCATION_ID });
+    }
+    console.log('[API] Creating shared Shopify fulfillment service');
+    const { serviceId, locationId, name } = await createFulfillmentService('Shared Supplier Warehouse');
+    console.log(`[API] Shared location created: location_id=${locationId} service_id=${serviceId}`);
+    res.json({
+      success:      true,
+      location_id:  locationId,
+      service_id:   serviceId,
+      service_name: name,
+      next_step:    `Set SHOPIFY_LOCATION_ID=${locationId} in your Railway environment variables, then redeploy.`,
+    });
+  } catch (err) {
+    console.error('[API] POST /inventory/setup-location error:', err.message);
+    res.status(502).json({ error: err.message });
   }
 });
 

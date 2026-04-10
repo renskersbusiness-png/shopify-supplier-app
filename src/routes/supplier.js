@@ -210,7 +210,7 @@ router.get('/inventory', (req, res) => {
 
     res.json({
       skus,
-      has_shopify_location: !!supplier.shopify_location_id,
+      has_shopify_location: !!process.env.SHOPIFY_LOCATION_ID,
     });
   } catch (err) {
     console.error('[Supplier API] GET /inventory error:', err);
@@ -254,24 +254,24 @@ router.patch('/inventory/:id', (req, res) => {
 router.post('/inventory/:id/sync', async (req, res) => {
   try {
     const supplierId = req.session.supplierId;
-    const supplier   = getSupplierById(supplierId);
     const entry      = skuDb.getSkuById(req.params.id);
 
     if (!entry) return res.status(404).json({ error: 'SKU not found' });
     if (entry.supplier_id !== supplierId) return res.status(403).json({ error: 'Forbidden' });
 
-    if (!supplier.shopify_location_id) {
-      return res.status(400).json({ error: 'No Shopify location configured for your account. Ask an admin to create one.' });
+    const locationId = process.env.SHOPIFY_LOCATION_ID;
+    if (!locationId) {
+      return res.status(400).json({ error: 'Inventory sync is not yet configured. Please contact your admin.' });
     }
     if (!entry.shopify_inventory_item_id) {
       return res.status(400).json({ error: 'This SKU has not been linked to a Shopify product yet. Ask an admin to run a lookup.' });
     }
 
-    console.log(`[inventory] syncing sku=${entry.sku} qty=${entry.stock_quantity} → location=${supplier.shopify_location_id}`);
+    console.log(`[inventory] syncing sku=${entry.sku} qty=${entry.stock_quantity} → location=${locationId}`);
 
     await setInventoryLevel(
       entry.shopify_inventory_item_id,
-      supplier.shopify_location_id,
+      locationId,
       entry.stock_quantity
     );
 
