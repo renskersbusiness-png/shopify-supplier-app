@@ -79,6 +79,18 @@ function updateStock(id, stockQuantity, lastSyncedAt = null) {
   `).run(Number(stockQuantity), lastSyncedAt, id);
 }
 
+/**
+ * decrementStock — subtract qty from stock_quantity for a specific supplier+sku.
+ * Never goes below 0. Used by the order webhook to deduct sold items.
+ */
+function decrementStock(supplierId, sku, qty) {
+  return getDb().prepare(`
+    UPDATE supplier_skus
+    SET stock_quantity = MAX(0, stock_quantity - ?)
+    WHERE supplier_id = ? AND UPPER(sku) = UPPER(?)
+  `).run(Number(qty), supplierId, sku);
+}
+
 // ── Delete ────────────────────────────────────────────────────────────────────
 
 function deleteSupplierSku(id) {
@@ -92,5 +104,6 @@ module.exports = {
   createSupplierSku,
   updateSupplierSku,
   updateStock,
+  decrementStock,
   deleteSupplierSku,
 };

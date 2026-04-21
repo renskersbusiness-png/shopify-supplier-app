@@ -15,6 +15,7 @@ const { createOrder, getOrderByShopifyId, updateOrderStatus, updateFinancialStat
 const { assignOrderLineItems, getAssignedSupplierIds } = require('../services/assignment');
 const { notifySuppliers } = require('../services/notifications');
 const { cancelOrderAssignments, updateFulfillmentTracking } = require('../db/assignments');
+const { decrementStock } = require('../db/supplier_skus');
 
 // ── HMAC Verification Middleware ──────────────────────────────────────────────
 
@@ -131,6 +132,16 @@ async function processNewOrder(payload) {
 
     logActivity(orderId, 'assignment',
       `${assigned.length}/${assignments.length} line item(s) auto-assigned`);
+
+    // Deduct sold quantities from supplier inventory catalog
+    for (const a of assignments) {
+      if (a.supplierId && a.sku) {
+        const r = decrementStock(a.supplierId, a.sku, a.quantity);
+        if (r.changes) {
+          console.log(`[Webhook] Stock decremented: supplier ${a.supplierId} SKU ${a.sku} -${a.quantity}`);
+        }
+      }
+    }
 
     // Notify each affected supplier of their new items
     const supplierIds = getAssignedSupplierIds(assignments);

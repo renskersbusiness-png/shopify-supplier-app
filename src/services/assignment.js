@@ -90,6 +90,8 @@ function assignOrderLineItems(order, lineItems, orderTags = []) {
       supplierId:   data.supplier_id,
       ruleId:       data.assignment_rule_id,
       status:       data.supplier_id ? 'assigned' : 'unassigned',
+      sku:          data.sku,
+      quantity:     data.quantity,
     });
 
     console.log(
