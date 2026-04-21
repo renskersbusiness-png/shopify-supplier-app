@@ -14,7 +14,7 @@ const { updateAssignmentTracking, markGroupFulfilled } = require('../db/assignme
 const { getOrderById, logActivity }     = require('../db/orders');
 const { getSupplierById }               = require('../db/suppliers');
 const skuDb                             = require('../db/supplier_skus');
-const { createFulfillmentForLineItems, setInventoryLevel } = require('../shopify/client');
+const { createFulfillmentForLineItems, setInventoryLevel, getInventoryLevels } = require('../shopify/client');
 
 // All routes here require a supplier session
 router.use(requireSupplierSession);
@@ -190,15 +190,44 @@ router.post('/fulfill', async (req, res) => {
 });
 
 // ── GET /api/supplier/inventory ───────────────────────────────────────────────
-// Returns all SKUs assigned to this supplier's catalog with current stock.
+// Returns all SKUs for this supplier. If Shopify location is configured,
+// fetches current stock levels from Shopify and updates the local DB first.
 
-router.get('/inventory', (req, res) => {
+router.get('/inventory', async (req, res) => {
   try {
     const supplierId = req.session.supplierId;
     const supplier   = getSupplierById(supplierId);
     if (!supplier) return res.status(404).json({ error: 'Supplier not found' });
 
-    const skus = skuDb.getSkusForSupplier(supplierId).map(s => ({
+    const locationId = process.env.SHOPIFY_LOCATION_ID;
+    let dbSkus       = skuDb.getSkusForSupplier(supplierId);
+
+    // Pull live stock from Shopify and refresh local DB
+    if (locationId) {
+      const linkedSkus = dbSkus.filter(s => s.shopify_inventory_item_id);
+      if (linkedSkus.length) {
+        try {
+          const ids    = linkedSkus.map(s => s.shopify_inventory_item_id);
+          const levels = await getInventoryLevels(ids, locationId);
+
+          for (const s of linkedSkus) {
+            const live = levels.get(String(s.shopify_inventory_item_id));
+            if (live !== undefined && live !== s.stock_quantity) {
+              skuDb.updateStock(s.id, live);
+              console.log(`[inventory] refreshed sku=${s.sku} ${s.stock_quantity}→${live} (from Shopify)`);
+            }
+          }
+
+          // Re-read from DB so we return the just-updated values
+          dbSkus = skuDb.getSkusForSupplier(supplierId);
+        } catch (shopifyErr) {
+          // Non-fatal — return local data if Shopify fetch fails
+          console.warn('[inventory] Shopify level fetch failed, returning local data:', shopifyErr.message);
+        }
+      }
+    }
+
+    const skus = dbSkus.map(s => ({
       id:                        s.id,
       sku:                       s.sku,
       product_title:             s.product_title,
@@ -210,7 +239,7 @@ router.get('/inventory', (req, res) => {
 
     res.json({
       skus,
-      has_shopify_location: !!process.env.SHOPIFY_LOCATION_ID,
+      has_shopify_location: !!locationId,
     });
   } catch (err) {
     console.error('[Supplier API] GET /inventory error:', err);
@@ -219,10 +248,10 @@ router.get('/inventory', (req, res) => {
 });
 
 // ── PATCH /api/supplier/inventory/:id ─────────────────────────────────────────
-// Supplier updates their local stock quantity for a SKU.
-// Does NOT push to Shopify — use POST /sync for that.
+// Supplier updates stock for a SKU. Saves locally and auto-syncs to Shopify
+// if the SKU is linked and a location is configured.
 
-router.patch('/inventory/:id', (req, res) => {
+router.patch('/inventory/:id', async (req, res) => {
   try {
     const supplierId = req.session.supplierId;
     const entry      = skuDb.getSkuById(req.params.id);
@@ -239,12 +268,25 @@ router.patch('/inventory/:id', (req, res) => {
       return res.status(400).json({ error: 'stock_quantity must be a non-negative integer' });
     }
 
-    skuDb.updateStock(entry.id, qty);
-    console.log(`[inventory] supplier=${supplierId} sku=${entry.sku} stock=${qty} (local save)`);
-    res.json({ success: true, sku: entry.sku, stock_quantity: qty });
+    const locationId = process.env.SHOPIFY_LOCATION_ID;
+    let synced = false;
+    let syncedAt = null;
+
+    // Auto-push to Shopify if the SKU is linked
+    if (locationId && entry.shopify_inventory_item_id) {
+      await setInventoryLevel(entry.shopify_inventory_item_id, locationId, qty);
+      syncedAt = new Date().toISOString();
+      synced   = true;
+      console.log(`[inventory] supplier=${supplierId} sku=${entry.sku} stock=${qty} → synced to Shopify`);
+    } else {
+      console.log(`[inventory] supplier=${supplierId} sku=${entry.sku} stock=${qty} (local only)`);
+    }
+
+    skuDb.updateStock(entry.id, qty, syncedAt);
+    res.json({ success: true, sku: entry.sku, stock_quantity: qty, synced });
   } catch (err) {
     console.error('[Supplier API] PATCH /inventory/:id error:', err);
-    res.status(500).json({ error: 'Failed to update stock' });
+    res.status(500).json({ error: err.message || 'Failed to update stock' });
   }
 });
 

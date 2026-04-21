@@ -626,6 +626,37 @@ async function setInventoryLevel(inventoryItemId, locationId, quantity) {
   return inventory_level;
 }
 
+/**
+ * getInventoryLevels(inventoryItemIds, locationId)
+ * Batch-fetches the current "available" quantity for multiple inventory items
+ * at one location in a single REST call.
+ * Returns a Map: inventoryItemId (string) → available (number)
+ * Scope required: read_inventory
+ */
+async function getInventoryLevels(inventoryItemIds, locationId) {
+  if (!inventoryItemIds.length) return new Map();
+
+  const token = await getAccessToken();
+  const ids   = inventoryItemIds.join(',');
+
+  const res = await fetch(
+    `https://${SHOPIFY_DOMAIN}/admin/api/${API_VERSION}/inventory_levels.json?inventory_item_ids=${ids}&location_ids=${locationId}`,
+    { headers: { 'X-Shopify-Access-Token': token } }
+  );
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Failed to fetch inventory levels (${res.status}): ${text}`);
+  }
+
+  const { inventory_levels } = await res.json();
+  const map = new Map();
+  for (const level of (inventory_levels || [])) {
+    map.set(String(level.inventory_item_id), level.available ?? 0);
+  }
+  return map;
+}
+
 module.exports = {
   shopifyGraphQL,
   getFulfillmentOrders,
@@ -638,4 +669,5 @@ module.exports = {
   getInventoryItemBySku,
   activateInventoryAtLocation,
   setInventoryLevel,
+  getInventoryLevels,
 };
