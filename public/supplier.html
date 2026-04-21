@@ -264,6 +264,26 @@ function renderOrderCard(group) {
   }
   const ts = trackingState[group.order_id];
 
+  let shippingBlock = '';
+  try {
+    const addr = JSON.parse(items[0]?.shipping_address || 'null');
+    if (addr) {
+      const line2 = [addr.address2].filter(Boolean).join('');
+      shippingBlock = `
+        <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:12px 14px;margin-bottom:12px;font-size:13px">
+          <div style="font-weight:600;color:#065f46;margin-bottom:6px">📦 Ship to</div>
+          <div style="color:#1f2937;line-height:1.6">
+            <strong>${esc(addr.name||'')}</strong><br>
+            ${esc(addr.address1||'')}${line2 ? '<br>'+esc(line2) : ''}<br>
+            ${esc(addr.city||'')}${addr.province_code ? ', '+esc(addr.province_code) : ''} ${esc(addr.zip||'')}<br>
+            ${esc(addr.country||'')}
+            ${addr.phone ? `<br><a href="tel:${esc(addr.phone)}" style="color:#065f46">${esc(addr.phone)}</a>` : ''}
+          </div>
+        </div>
+      `;
+    }
+  } catch(_) {}
+
   const itemRows = items.map(a => `
     <div class="item-row">
       <div class="item-info">
@@ -327,6 +347,7 @@ function renderOrderCard(group) {
         </div>
       </div>
       <div class="order-card-body" id="order-body-${group.order_id}">
+        ${shippingBlock}
         ${itemRows}
         ${trackingSection}
       </div>
