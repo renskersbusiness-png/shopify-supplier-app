@@ -23,7 +23,8 @@
     .stat-value { font-size: 24px; font-weight: 700; color: #111827; margin-top: 2px; }
 
     /* Filter tabs */
-    .filter-tabs { display: flex; gap: 4px; margin-bottom: 18px; background: white; border: 1px solid #e5e7eb; border-radius: 10px; padding: 6px; width: fit-content; }
+    .filter-tabs-wrapper { position: sticky; top: 0; z-index: 100; background: #f8fafc; padding: 10px 0 10px; margin-bottom: 8px; border-bottom: 1px solid #e5e7eb; }
+    .filter-tabs { display: flex; gap: 4px; background: white; border: 1px solid #e5e7eb; border-radius: 10px; padding: 6px; width: fit-content; }
     .filter-tab { padding: 7px 16px; border-radius: 7px; font-size: 13px; font-weight: 500; border: none; background: none; color: #6b7280; transition: all 0.12s; }
     .filter-tab:hover { background: #f3f4f6; }
     .filter-tab.active { background: #6366f1; color: white; }
@@ -135,12 +136,14 @@
       <div class="stat-card"><div class="stat-label">Fulfilled</div><div class="stat-value" id="stat-fulfilled">—</div></div>
     </div>
 
-    <!-- Filter tabs -->
-    <div class="filter-tabs">
-      <button class="filter-tab active" onclick="setFilter('', this)">All</button>
-      <button class="filter-tab" onclick="setFilter('assigned', this)">To Do</button>
-      <button class="filter-tab" onclick="setFilter('tracking_added', this)">Tracking Added</button>
-      <button class="filter-tab" onclick="setFilter('fulfilled', this)">Fulfilled</button>
+    <!-- Filter tabs (sticky) -->
+    <div class="filter-tabs-wrapper">
+      <div class="filter-tabs">
+        <button class="filter-tab active" onclick="setFilter('', this)">All</button>
+        <button class="filter-tab" onclick="setFilter('assigned', this)">To Do</button>
+        <button class="filter-tab" onclick="setFilter('tracking_added', this)">Tracking Added</button>
+        <button class="filter-tab" onclick="setFilter('fulfilled', this)">Fulfilled</button>
+      </div>
     </div>
 
     <!-- Orders list -->
@@ -358,8 +361,16 @@ function renderOrderCard(group) {
 function toggleOrder(orderId) {
   const body    = document.getElementById('order-body-' + orderId);
   const chevron = document.getElementById('chevron-' + orderId);
-  const isOpen  = body.classList.toggle('open');
+  const card    = body.closest('.order-card');
+  const cardTop = card.getBoundingClientRect().top;
+
+  const isOpen = body.classList.toggle('open');
   chevron.textContent = isOpen ? '▲' : '▼';
+
+  // If closing a card that's above the current viewport, prevent the jump
+  if (!isOpen && cardTop < 0) {
+    window.scrollBy(0, -body.offsetHeight);
+  }
 }
 
 function setFilter(status, btn) {
