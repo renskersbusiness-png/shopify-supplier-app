@@ -332,6 +332,9 @@ function renderOrderCard(group) {
         ${hasTracking ? `
           <button class="btn btn-success btn-sm" onclick="fulfillOrder(${group.order_id}, this)">
             ✅ Mark as Shipped in Shopify
+          </button>
+          <button class="btn btn-secondary btn-sm" onclick="removeTracking(${group.order_id}, this)" style="color:#b91c1c;border-color:#fecaca">
+            🗑 Remove Tracking
           </button>` : ''}
       </div>
     </div>
@@ -404,6 +407,26 @@ async function saveTracking(orderId, btn) {
   } catch(e) {
     toast(e.message, 'error');
   } finally {
+    btn.disabled    = false;
+    btn.textContent = orig;
+  }
+}
+
+async function removeTracking(orderId, btn) {
+  if (!confirm('Remove the saved tracking for this order? The item will go back to "Action needed".')) return;
+  btn.disabled    = true;
+  const orig      = btn.textContent;
+  btn.textContent = 'Removing…';
+  try {
+    await api('/api/supplier/tracking', {
+      method: 'DELETE',
+      body:   JSON.stringify({ order_id: orderId }),
+    });
+    delete trackingState[orderId];
+    toast('Tracking removed', 'success');
+    await loadAssignments();
+  } catch (e) {
+    toast(e.message, 'error');
     btn.disabled    = false;
     btn.textContent = orig;
   }

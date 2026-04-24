@@ -146,6 +146,19 @@ function updateAssignmentTracking(orderId, supplierId, { tracking_number, tracki
   `).run(tracking_number, tracking_carrier, tracking_url || null, orderId, supplierId);
 }
 
+/**
+ * clearAssignmentTracking — remove tracking and revert status to 'assigned'.
+ * Only affects items in 'tracking_added' state. Fulfilled items are untouched.
+ */
+function clearAssignmentTracking(orderId, supplierId) {
+  return getDb().prepare(`
+    UPDATE line_item_assignments
+    SET tracking_number = NULL, tracking_carrier = NULL, tracking_url = NULL,
+        status = 'assigned'
+    WHERE order_id = ? AND supplier_id = ? AND status = 'tracking_added'
+  `).run(orderId, supplierId);
+}
+
 function markGroupFulfilled(orderId, supplierId, shopifyFulfillmentId) {
   return getDb().prepare(`
     UPDATE line_item_assignments
@@ -267,6 +280,7 @@ module.exports = {
   assignmentExistsForLineItem,
   updateAssignmentSupplier,
   updateAssignmentTracking,
+  clearAssignmentTracking,
   markGroupFulfilled,
   getUnnotifiedAssignments,
   markNotified,

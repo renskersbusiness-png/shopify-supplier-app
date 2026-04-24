@@ -10,7 +10,7 @@ const router  = express.Router();
 
 const { requireSupplierSession } = require('../middleware/auth');
 const asgDb = require('../db/assignments');
-const { updateAssignmentTracking, markGroupFulfilled } = require('../db/assignments');
+const { updateAssignmentTracking, clearAssignmentTracking, markGroupFulfilled } = require('../db/assignments');
 const { getOrderById, logActivity }     = require('../db/orders');
 const { getSupplierById }               = require('../db/suppliers');
 const skuDb                             = require('../db/supplier_skus');
@@ -119,6 +119,31 @@ router.patch('/tracking', async (req, res) => {
   } catch (err) {
     console.error('[tracking] failed →', err.message, err);
     res.status(500).json({ error: 'Failed to update tracking' });
+  }
+});
+
+// ── DELETE /api/supplier/tracking — remove tracking for an order ─────────────
+// Reverts tracking_added assignments back to 'assigned'. Fulfilled items untouched.
+
+router.delete('/tracking', (req, res) => {
+  try {
+    const { order_id } = req.body;
+    const supplierId   = req.session.supplierId;
+
+    if (!order_id) return res.status(400).json({ error: 'order_id is required' });
+
+    const order = getOrderById(order_id);
+    if (!order) return res.status(404).json({ error: 'Order not found' });
+
+    const result = clearAssignmentTracking(order_id, supplierId);
+    logActivity(order.id, 'tracking_removed',
+      `Supplier ${supplierId} removed tracking (${result.changes} item(s) reverted)`);
+
+    console.log(`[tracking] removed for order_id=${order_id} supplier=${supplierId} (${result.changes} items)`);
+    res.json({ success: true, reverted: result.changes });
+  } catch (err) {
+    console.error('[tracking] remove failed →', err.message);
+    res.status(500).json({ error: 'Failed to remove tracking' });
   }
 });
 
