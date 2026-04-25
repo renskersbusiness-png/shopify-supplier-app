@@ -171,6 +171,48 @@
       .nav-item span:not(.icon), .sidebar-logo > span:last-child { display: none; }
       .main { margin-left: 60px; }
     }
+
+    /* ── Phone (sidebar collapses to a top icon bar) ──────────────────── */
+    @media (max-width: 640px) {
+      body { font-size: 13px; }
+      .sidebar {
+        position: fixed; top: 0; left: 0; right: 0; bottom: auto;
+        width: 100%; height: 52px; flex-direction: row; align-items: center;
+        padding: 0 6px; overflow-x: auto; -webkit-overflow-scrolling: touch;
+        z-index: 50;
+      }
+      .sidebar-logo { display: none; }
+      .sidebar-nav { flex: 1; display: flex; padding: 0; gap: 2px; overflow-x: auto; flex-wrap: nowrap; }
+      .nav-item { padding: 6px 10px; flex: 0 0 auto; white-space: nowrap; font-size: 12px; }
+      .nav-item span:not(.icon) { display: inline; }
+      .sidebar-footer { padding: 0 6px; border-top: none; flex: 0 0 auto; }
+      .sidebar-footer .nav-item { padding: 6px 8px; }
+      .main { margin-left: 0; padding-top: 52px; }
+      .topbar { padding: 10px 12px; }
+      .topbar h1 { font-size: 15px; }
+      .content { padding: 14px 12px; }
+
+      .toolbar { flex-wrap: wrap; gap: 8px; }
+      .search-wrap { flex: 1 1 100%; max-width: none; min-width: 0; }
+      .filter-select, select, .toolbar > * { min-width: 0; }
+
+      .stat-card { padding: 10px 12px; min-width: 0; flex: 1 1 calc(50% - 6px); }
+      .stat-value { font-size: 18px; }
+
+      table { font-size: 12px; }
+      table th, table td { padding: 8px 10px !important; }
+      .table-wrap, .scroll-table { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+      .dialog { padding: 20px; width: 100%; max-width: calc(100vw - 24px); border-radius: 10px; }
+      .modal-panel { width: 100%; max-width: 100vw; border-radius: 0; }
+      .modal-overlay { padding: 0; }
+
+      .form-row { flex-direction: column; gap: 8px; }
+      input, select, textarea { font-size: 16px !important; } /* prevents iOS zoom */
+      .btn-sm { font-size: 12px; padding: 6px 10px; }
+
+      .toast { left: 12px; right: 12px; bottom: 16px; }
+    }
   </style>
 </head>
 <body>
