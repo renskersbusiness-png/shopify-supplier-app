@@ -333,12 +333,19 @@ function renderOrderCard(group) {
   let trackingSection;
   if (threeplEnabled) {
     const sentInfo = items[0];
+    const trackUrl = sentInfo?.tracking_number
+      ? `https://t.17track.net/en#nums=${encodeURIComponent(sentInfo.tracking_number)}`
+      : null;
     trackingSection = isSent ? `
       <div class="success-box" style="margin-top:14px">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px">
           <div>
             ✅ <strong>Sent to 3PL</strong> — the warehouse will fulfill in Shopify.
-            ${sentInfo?.tracking_number ? `<div style="margin-top:6px;font-size:12px">Internal tracking: <strong>${esc(sentInfo.tracking_carrier||'')}</strong> ${esc(sentInfo.tracking_number)}</div>` : ''}
+            ${sentInfo?.tracking_number ? `
+              <div style="margin-top:6px;font-size:12px">
+                Internal tracking: <strong>${esc(sentInfo.tracking_carrier||'')}</strong> ${esc(sentInfo.tracking_number)}
+                <a href="${trackUrl}" target="_blank" rel="noopener" style="margin-left:8px;color:#065f46;font-weight:600">Track on 17track →</a>
+              </div>` : ''}
           </div>
           <button class="btn btn-secondary btn-sm" onclick="unmarkSent(${group.order_id}, this)" style="color:#b91c1c;border-color:#fecaca">↩ Undo</button>
         </div>
