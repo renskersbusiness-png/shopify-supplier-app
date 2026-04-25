@@ -431,7 +431,7 @@
           <button class="btn btn-primary btn-sm" onclick="saveThreepl(this)">Save 3PL address</button>
         </div>
         <div style="margin-top:14px;padding:10px 12px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;font-size:12px;color:#6b7280">
-          <strong>3PL flow toggle:</strong> set <code>THREEPL_FLOW=true</code> in Railway env vars to enable the new 3PL flow (suppliers see this warehouse address and a "Mark as Sent to 3PL" button instead of tracking inputs). Set to <code>false</code> (or unset) to revert.
+          Suppliers see this warehouse address as the destination for every order, plus a "Mark as Sent to 3PL" button (instead of pushing tracking to Shopify directly). The 3PL adds the customer-facing tracking in Shopify.
         </div>
       </div>
     </div>
@@ -1151,15 +1151,9 @@ async function loadSettingsTab() {
   try {
     const r = await api('/api/settings/threepl');
     const flagEl = document.getElementById('threepl-flag');
-    if (r.enabled) {
-      flagEl.textContent = r.is_default ? '3PL flow enabled · using default address' : '3PL flow enabled · custom address';
-      flagEl.style.background = '#d1fae5';
-      flagEl.style.color = '#065f46';
-    } else {
-      flagEl.textContent = '3PL flow disabled';
-      flagEl.style.background = '#f3f4f6';
-      flagEl.style.color = '#6b7280';
-    }
+    flagEl.textContent = r.is_default ? 'Using default address' : 'Custom address active';
+    flagEl.style.background = r.is_default ? '#f3f4f6' : '#d1fae5';
+    flagEl.style.color      = r.is_default ? '#6b7280' : '#065f46';
     const a = r.address || {};
     document.getElementById('tpl-name').value     = a.name          || '';
     document.getElementById('tpl-address1').value = a.address1      || '';

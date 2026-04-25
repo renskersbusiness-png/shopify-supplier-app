@@ -53,18 +53,14 @@ router.get('/assignments', (req, res) => {
       .map(stripPricing);
     const stats = asgDb.getAssignmentStats(supplierId);
 
-    // 3PL flow: when enabled, suppliers ship to 3PL warehouse instead of customer.
-    // Toggleable via env var so we can revert easily. Address falls back to a
-    // hardcoded default if no override is set in the settings table.
-    const threeplEnabled = process.env.THREEPL_FLOW === 'true';
-    const threeplAddress = threeplEnabled ? settingsDb.getThreeplAddress() : null;
-
+    // 3PL flow: suppliers ship to a 3PL warehouse, not the customer.
+    // Address falls back to a hardcoded default if no admin override is set.
     res.json({
       assignments,
       stats,
       page: parseInt(page),
-      threepl_enabled: threeplEnabled,
-      threepl_address: threeplAddress,
+      threepl_enabled: true,
+      threepl_address: settingsDb.getThreeplAddress(),
     });
   } catch (err) {
     console.error('[Supplier API] GET /assignments error:', err);
@@ -78,9 +74,6 @@ router.get('/assignments', (req, res) => {
 
 router.post('/sent', (req, res) => {
   try {
-    if (process.env.THREEPL_FLOW !== 'true') {
-      return res.status(400).json({ error: '3PL flow is not enabled' });
-    }
     const { order_id, tracking_number, tracking_carrier, tracking_url } = req.body;
     const supplierId   = req.session.supplierId;
     if (!order_id) return res.status(400).json({ error: 'order_id is required' });
