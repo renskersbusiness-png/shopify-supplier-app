@@ -183,6 +183,14 @@ const trackingState = {};
 // 3PL flow state — populated by loadAssignments
 let threeplEnabled = false;
 let threeplAddress = null;
+// Per-order override: { [order_id]: true } means render the legacy Shopify
+// tracking form for this order instead of the 3PL "Mark as Sent" form.
+// Used for old orders that pre-date the 3PL switchover.
+const useLegacyFlow = {};
+function toggleLegacyFlow(orderId) {
+  useLegacyFlow[orderId] = !useLegacyFlow[orderId];
+  loadAssignments();
+}
 
 document.addEventListener('DOMContentLoaded', async () => {
   await loadMe();
@@ -302,15 +310,18 @@ function renderOrderCard(group) {
   }
   const ts = trackingState[group.order_id];
 
-  // Address block: in 3PL flow show the 3PL warehouse address; otherwise show customer
+  // Address block: 3PL warehouse by default; customer address when this order
+  // is using the legacy flow (per-order escape hatch).
+  const useLegacyForAddr = useLegacyFlow[group.order_id] === true;
+  const showThreepl = threeplEnabled && !useLegacyForAddr;
   let shippingBlock = '';
   try {
-    const addr = threeplEnabled
+    const addr = showThreepl
       ? threeplAddress
       : JSON.parse(items[0]?.shipping_address || 'null');
     if (addr) {
       const line2 = [addr.address2].filter(Boolean).join('');
-      const heading = threeplEnabled ? '🏢 Ship to (3PL warehouse)' : '📦 Ship to';
+      const heading = showThreepl ? '🏢 Ship to (3PL warehouse)' : '📦 Ship to';
       shippingBlock = `
         <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:12px 14px;margin-bottom:12px;font-size:13px">
           <div style="font-weight:600;color:#065f46;margin-bottom:6px">${heading}</div>
@@ -323,7 +334,7 @@ function renderOrderCard(group) {
           </div>
         </div>
       `;
-    } else if (threeplEnabled) {
+    } else if (showThreepl) {
       shippingBlock = `
         <div style="background:#fef3c7;border:1px solid #fde68a;border-radius:8px;padding:12px 14px;margin-bottom:12px;font-size:13px;color:#92400e">
           ⚠️ The 3PL warehouse address has not been configured yet. Please contact your admin.
@@ -342,9 +353,12 @@ function renderOrderCard(group) {
     </div>
   `).join('');
 
-  // 3PL flow: simpler "Mark as Sent" UI, no Shopify tracking integration
+  // 3PL flow: simpler "Mark as Sent" UI, no Shopify tracking integration.
+  // Per-order escape hatch: useLegacyFlow[order_id] forces the old flow for
+  // pre-existing orders that need to be fulfilled in Shopify directly.
+  const showLegacyForThisOrder = useLegacyFlow[group.order_id] === true;
   let trackingSection;
-  if (threeplEnabled) {
+  if (threeplEnabled && !showLegacyForThisOrder) {
     const sentInfo = items[0];
     const trackUrl = sentInfo?.tracking_number
       ? `https://t.17track.net/en#nums=${encodeURIComponent(sentInfo.tracking_number)}`
@@ -386,6 +400,11 @@ function renderOrderCard(group) {
           <button class="btn btn-success btn-sm" onclick="markSent(${group.order_id}, this)">
             📦 Mark as Sent to 3PL
           </button>
+        </div>
+        <div style="margin-top:10px;font-size:12px">
+          <a href="javascript:void(0)" onclick="toggleLegacyFlow(${group.order_id})" style="color:#6b7280;text-decoration:underline">
+            Need to fulfill via Shopify directly? Use legacy tracking instead →
+          </a>
         </div>
       </div>
     `;
@@ -430,6 +449,12 @@ function renderOrderCard(group) {
             🗑 Remove Tracking
           </button>` : ''}
       </div>
+      ${threeplEnabled ? `
+      <div style="margin-top:10px;font-size:12px">
+        <a href="javascript:void(0)" onclick="toggleLegacyFlow(${group.order_id})" style="color:#6b7280;text-decoration:underline">
+          ← Back to 3PL flow
+        </a>
+      </div>` : ''}
     </div>
   `;
     trackingSection = _trackingSectionLegacy;
