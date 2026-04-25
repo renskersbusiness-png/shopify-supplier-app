@@ -72,6 +72,7 @@
     .badge::before { content: ''; width: 5px; height: 5px; border-radius: 50%; display: block; }
     .badge-assigned      { background: #dbeafe; color: #2563eb; } .badge-assigned::before      { background: #2563eb; }
     .badge-tracking_added{ background: #ede9fe; color: #7c3aed; } .badge-tracking_added::before{ background: #7c3aed; }
+    .badge-sent_to_3pl   { background: #ede9fe; color: #7c3aed; } .badge-sent_to_3pl::before   { background: #7c3aed; }
     .badge-fulfilled     { background: #d1fae5; color: #059669; } .badge-fulfilled::before     { background: #059669; }
     .badge-unassigned    { background: #f3f4f6; color: #6b7280; } .badge-unassigned::before    { background: #9ca3af; }
 
@@ -179,6 +180,9 @@
 let currentFilter = '';
 // Map of order_id → tracking form state
 const trackingState = {};
+// 3PL flow state — populated by loadAssignments
+let threeplEnabled = false;
+let threeplAddress = null;
 
 document.addEventListener('DOMContentLoaded', async () => {
   await loadMe();
@@ -219,10 +223,27 @@ async function loadAssignments() {
     const params = new URLSearchParams();
     if (currentFilter) params.set('status', currentFilter);
     const r = await api(`/api/supplier/assignments?${params}`);
+    threeplEnabled = !!r.threepl_enabled;
+    threeplAddress = r.threepl_address || null;
     const stats = r.stats || {};
     document.getElementById('stat-assigned').textContent  = stats.assigned  || 0;
-    document.getElementById('stat-tracking').textContent  = stats.tracking_added || 0;
+    document.getElementById('stat-tracking').textContent  = (threeplEnabled ? (stats.sent_to_3pl || 0) : (stats.tracking_added || 0));
     document.getElementById('stat-fulfilled').textContent = stats.fulfilled  || 0;
+    // Switch label of middle stat card based on flow
+    const trackingStatLabel = document.querySelector('#stat-tracking')?.previousElementSibling;
+    if (trackingStatLabel) trackingStatLabel.textContent = threeplEnabled ? 'Sent to 3PL' : 'Tracking Added';
+    // Switch filter tab labels
+    document.querySelectorAll('.filter-tab').forEach(tab => {
+      const filterAttr = tab.getAttribute('onclick') || '';
+      if (filterAttr.includes("'tracking_added'")) {
+        tab.textContent = threeplEnabled ? 'Sent to 3PL' : 'Tracking Added';
+        if (threeplEnabled) tab.setAttribute('onclick', "setFilter('sent_to_3pl', this)");
+        else tab.setAttribute('onclick', "setFilter('tracking_added', this)");
+      } else if (filterAttr.includes("'sent_to_3pl'")) {
+        tab.textContent = threeplEnabled ? 'Sent to 3PL' : 'Tracking Added';
+        if (!threeplEnabled) tab.setAttribute('onclick', "setFilter('tracking_added', this)");
+      }
+    });
 
     const rows = r.assignments || [];
     if (!rows.length) {
@@ -256,6 +277,7 @@ function renderOrderCard(group) {
   const allStatuses = [...new Set(items.map(i => i.status))];
   const hasTracking = items[0]?.tracking_number;
   const isFulfilled = items.every(i => i.status === 'fulfilled');
+  const isSent      = items.every(i => i.status === 'sent_to_3pl' || i.status === 'fulfilled');
 
   // Pre-fill tracking state
   if (!trackingState[group.order_id]) {
@@ -267,14 +289,18 @@ function renderOrderCard(group) {
   }
   const ts = trackingState[group.order_id];
 
+  // Address block: in 3PL flow show the 3PL warehouse address; otherwise show customer
   let shippingBlock = '';
   try {
-    const addr = JSON.parse(items[0]?.shipping_address || 'null');
+    const addr = threeplEnabled
+      ? threeplAddress
+      : JSON.parse(items[0]?.shipping_address || 'null');
     if (addr) {
       const line2 = [addr.address2].filter(Boolean).join('');
+      const heading = threeplEnabled ? '🏢 Ship to (3PL warehouse)' : '📦 Ship to';
       shippingBlock = `
         <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:12px 14px;margin-bottom:12px;font-size:13px">
-          <div style="font-weight:600;color:#065f46;margin-bottom:6px">📦 Ship to</div>
+          <div style="font-weight:600;color:#065f46;margin-bottom:6px">${heading}</div>
           <div style="color:#1f2937;line-height:1.6">
             <strong>${esc(addr.name||'')}</strong><br>
             ${esc(addr.address1||'')}${line2 ? '<br>'+esc(line2) : ''}<br>
@@ -282,6 +308,12 @@ function renderOrderCard(group) {
             ${esc(addr.country||'')}
             ${addr.phone ? `<br><a href="tel:${esc(addr.phone)}" style="color:#065f46">${esc(addr.phone)}</a>` : ''}
           </div>
+        </div>
+      `;
+    } else if (threeplEnabled) {
+      shippingBlock = `
+        <div style="background:#fef3c7;border:1px solid #fde68a;border-radius:8px;padding:12px 14px;margin-bottom:12px;font-size:13px;color:#92400e">
+          ⚠️ The 3PL warehouse address has not been configured yet. Please contact your admin.
         </div>
       `;
     }
@@ -297,7 +329,27 @@ function renderOrderCard(group) {
     </div>
   `).join('');
 
-  const trackingSection = isFulfilled ? `
+  // 3PL flow: simpler "Mark as Sent" UI, no Shopify tracking integration
+  let trackingSection;
+  if (threeplEnabled) {
+    trackingSection = isSent ? `
+      <div class="success-box" style="margin-top:14px;display:flex;justify-content:space-between;align-items:center;gap:10px">
+        <span>✅ Sent to 3PL — the warehouse will fulfill in Shopify.</span>
+        <button class="btn btn-secondary btn-sm" onclick="unmarkSent(${group.order_id}, this)" style="color:#b91c1c;border-color:#fecaca">↩ Undo</button>
+      </div>
+    ` : `
+      <div class="tracking-form" id="tracking-form-${group.order_id}">
+        <h3>🏢 Sent to 3PL?</h3>
+        <p style="font-size:13px;color:#6b7280;margin-bottom:12px">Once you've shipped these items to the 3PL warehouse, click below. The 3PL will handle final shipment to the customer and fulfill in Shopify.</p>
+        <div class="form-actions">
+          <button class="btn btn-success btn-sm" onclick="markSent(${group.order_id}, this)">
+            📦 Mark as Sent to 3PL
+          </button>
+        </div>
+      </div>
+    `;
+  } else {
+  const _trackingSectionLegacy = isFulfilled ? `
     <div class="success-box" style="margin-top:14px">
       ✅ Fulfilled — <strong>${esc(items[0]?.tracking_carrier||'')}</strong> ${esc(items[0]?.tracking_number||'')}
       ${items[0]?.tracking_url ? `<a href="${esc(items[0].tracking_url)}" target="_blank" style="color:#065f46;margin-left:8px">Track →</a>` : ''}
@@ -339,6 +391,19 @@ function renderOrderCard(group) {
       </div>
     </div>
   `;
+    trackingSection = _trackingSectionLegacy;
+  }
+
+  // Status badge — picks from 3PL flow or legacy flow
+  const headerBadge = isFulfilled
+    ? '<span class="badge badge-fulfilled">Fulfilled</span>'
+    : (threeplEnabled
+        ? (isSent
+            ? '<span class="badge badge-tracking_added">Sent to 3PL</span>'
+            : '<span class="badge badge-assigned">Action needed</span>')
+        : (hasTracking
+            ? '<span class="badge badge-tracking_added">Tracking Added</span>'
+            : '<span class="badge badge-assigned">Action needed</span>'));
 
   return `
     <div class="order-card">
@@ -348,7 +413,7 @@ function renderOrderCard(group) {
           <div class="order-meta">${esc(group.customer_name||'—')} · ${items.length} item(s) · ${fmtDate(group.created_at)}</div>
         </div>
         <div style="display:flex;align-items:center;gap:8px">
-          ${isFulfilled ? '<span class="badge badge-fulfilled">Fulfilled</span>' : (hasTracking ? '<span class="badge badge-tracking_added">Tracking Added</span>' : '<span class="badge badge-assigned">Action needed</span>')}
+          ${headerBadge}
           <span style="color:#9ca3af;font-size:16px" id="chevron-${group.order_id}">▼</span>
         </div>
       </div>
@@ -407,6 +472,44 @@ async function saveTracking(orderId, btn) {
   } catch(e) {
     toast(e.message, 'error');
   } finally {
+    btn.disabled    = false;
+    btn.textContent = orig;
+  }
+}
+
+async function markSent(orderId, btn) {
+  if (!confirm('Mark this order as sent to the 3PL warehouse?')) return;
+  btn.disabled    = true;
+  const orig      = btn.textContent;
+  btn.textContent = 'Marking…';
+  try {
+    await api('/api/supplier/sent', {
+      method: 'POST',
+      body:   JSON.stringify({ order_id: orderId }),
+    });
+    toast('Marked as sent to 3PL', 'success');
+    await loadAssignments();
+  } catch (e) {
+    toast(e.message, 'error');
+    btn.disabled    = false;
+    btn.textContent = orig;
+  }
+}
+
+async function unmarkSent(orderId, btn) {
+  if (!confirm('Undo "Sent to 3PL" for this order?')) return;
+  btn.disabled    = true;
+  const orig      = btn.textContent;
+  btn.textContent = 'Reverting…';
+  try {
+    await api('/api/supplier/sent', {
+      method: 'DELETE',
+      body:   JSON.stringify({ order_id: orderId }),
+    });
+    toast('Reverted', 'success');
+    await loadAssignments();
+  } catch (e) {
+    toast(e.message, 'error');
     btn.disabled    = false;
     btn.textContent = orig;
   }

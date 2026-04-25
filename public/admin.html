@@ -197,6 +197,9 @@
     <button class="nav-item" onclick="showTab('inventory', this)">
       <span class="icon">📦</span><span>Inventory</span>
     </button>
+    <button class="nav-item" onclick="showTab('settings', this)">
+      <span class="icon">⚡</span><span>Settings</span>
+    </button>
   </nav>
   <div class="sidebar-footer">
     <form method="POST" action="/logout" style="margin:0">
@@ -380,6 +383,59 @@
       </div>
     </div>
 
+    <!-- ── SETTINGS TAB ────────────────────────────────────────────────────── -->
+    <div id="tab-settings" class="tab-content">
+      <div class="card" style="max-width:640px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+          <div>
+            <h3 style="font-size:15px;font-weight:600">3PL warehouse address</h3>
+            <p style="font-size:13px;color:#6b7280;margin-top:2px">Suppliers will be shown this address as the destination for every order.</p>
+          </div>
+          <span id="threepl-flag" class="badge" style="font-size:11px"></span>
+        </div>
+        <div id="threepl-form" style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <div class="form-group" style="grid-column:1/-1">
+            <label>Warehouse name *</label>
+            <input type="text" id="tpl-name" placeholder="e.g. Acme 3PL Detroit">
+          </div>
+          <div class="form-group" style="grid-column:1/-1">
+            <label>Address line 1 *</label>
+            <input type="text" id="tpl-address1" placeholder="123 Warehouse Way">
+          </div>
+          <div class="form-group" style="grid-column:1/-1">
+            <label>Address line 2</label>
+            <input type="text" id="tpl-address2" placeholder="Suite 200 (optional)">
+          </div>
+          <div class="form-group">
+            <label>City *</label>
+            <input type="text" id="tpl-city">
+          </div>
+          <div class="form-group">
+            <label>State / Province code</label>
+            <input type="text" id="tpl-province" placeholder="MI">
+          </div>
+          <div class="form-group">
+            <label>ZIP / Postal code *</label>
+            <input type="text" id="tpl-zip">
+          </div>
+          <div class="form-group">
+            <label>Country *</label>
+            <input type="text" id="tpl-country" placeholder="United States">
+          </div>
+          <div class="form-group" style="grid-column:1/-1">
+            <label>Phone</label>
+            <input type="text" id="tpl-phone">
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:14px">
+          <button class="btn btn-primary btn-sm" onclick="saveThreepl(this)">Save 3PL address</button>
+        </div>
+        <div style="margin-top:14px;padding:10px 12px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;font-size:12px;color:#6b7280">
+          <strong>3PL flow toggle:</strong> set <code>THREEPL_FLOW=true</code> in Railway env vars to enable the new 3PL flow (suppliers see this warehouse address and a "Mark as Sent to 3PL" button instead of tracking inputs). Set to <code>false</code> (or unset) to revert.
+        </div>
+      </div>
+    </div>
+
   </div><!-- /content -->
 </main>
 
@@ -522,7 +578,7 @@ function showTab(tab, btn) {
   document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
   document.getElementById('tab-' + tab).classList.add('active');
   btn.classList.add('active');
-  const titles = { orders: 'Orders', suppliers: 'Suppliers', rules: 'Assignment Rules', assignments: 'Line Item Assignments', inventory: 'Inventory' };
+  const titles = { orders: 'Orders', suppliers: 'Suppliers', rules: 'Assignment Rules', assignments: 'Line Item Assignments', inventory: 'Inventory', settings: 'Settings' };
   document.getElementById('page-title').textContent = titles[tab] || tab;
   refreshTab();
 }
@@ -533,6 +589,7 @@ function refreshTab() {
   if (currentTab === 'rules')       loadRules();
   if (currentTab === 'assignments') loadAssignments();
   if (currentTab === 'inventory')   loadInventoryTab();
+  if (currentTab === 'settings')    loadSettingsTab();
 }
 
 // ─── API helper ───────────────────────────────────────────────────────────────
@@ -1087,6 +1144,63 @@ async function loadInventoryTab() {
   populateInvSupplierSelect();
   await loadGlobalLocation();
   if (invSupplierId) loadInventoryForSupplier(invSupplierId);
+}
+
+// ─── Settings tab (3PL) ──────────────────────────────────────────────────────
+async function loadSettingsTab() {
+  try {
+    const r = await api('/api/settings/threepl');
+    const flagEl = document.getElementById('threepl-flag');
+    if (r.enabled) {
+      flagEl.textContent = '3PL flow enabled';
+      flagEl.style.background = '#d1fae5';
+      flagEl.style.color = '#065f46';
+    } else {
+      flagEl.textContent = '3PL flow disabled';
+      flagEl.style.background = '#f3f4f6';
+      flagEl.style.color = '#6b7280';
+    }
+    const a = r.address || {};
+    document.getElementById('tpl-name').value     = a.name          || '';
+    document.getElementById('tpl-address1').value = a.address1      || '';
+    document.getElementById('tpl-address2').value = a.address2      || '';
+    document.getElementById('tpl-city').value     = a.city          || '';
+    document.getElementById('tpl-province').value = a.province_code || '';
+    document.getElementById('tpl-zip').value      = a.zip           || '';
+    document.getElementById('tpl-country').value  = a.country       || '';
+    document.getElementById('tpl-phone').value    = a.phone         || '';
+  } catch (e) {
+    toast(e.message, 'error');
+  }
+}
+
+async function saveThreepl(btn) {
+  const payload = {
+    name:          document.getElementById('tpl-name').value.trim(),
+    address1:      document.getElementById('tpl-address1').value.trim(),
+    address2:      document.getElementById('tpl-address2').value.trim(),
+    city:          document.getElementById('tpl-city').value.trim(),
+    province_code: document.getElementById('tpl-province').value.trim(),
+    zip:           document.getElementById('tpl-zip').value.trim(),
+    country:       document.getElementById('tpl-country').value.trim(),
+    phone:         document.getElementById('tpl-phone').value.trim(),
+  };
+  if (!payload.name || !payload.address1 || !payload.city || !payload.zip || !payload.country) {
+    toast('Name, address line 1, city, zip and country are required', 'error');
+    return;
+  }
+  btn.disabled    = true;
+  const orig      = btn.textContent;
+  btn.textContent = 'Saving…';
+  try {
+    await api('/api/settings/threepl', { method: 'PUT', body: JSON.stringify(payload) });
+    toast('3PL address saved', 'success');
+  } catch (e) {
+    toast(e.message, 'error');
+  } finally {
+    btn.disabled    = false;
+    btn.textContent = orig;
+  }
 }
 
 async function loadInventoryForSupplier(supplierId) {

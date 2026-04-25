@@ -159,6 +159,32 @@ function clearAssignmentTracking(orderId, supplierId) {
   `).run(orderId, supplierId);
 }
 
+/**
+ * markGroupSentTo3pl(orderId, supplierId)
+ * Marks supplier's items in an order as sent to 3PL. Local state only —
+ * does NOT push anything to Shopify (3PL handles fulfillment there).
+ * Only moves items from 'assigned' → 'sent_to_3pl'.
+ */
+function markGroupSentTo3pl(orderId, supplierId) {
+  return getDb().prepare(`
+    UPDATE line_item_assignments
+    SET status = 'sent_to_3pl'
+    WHERE order_id = ? AND supplier_id = ? AND status = 'assigned'
+  `).run(orderId, supplierId);
+}
+
+/**
+ * unmarkGroupSentTo3pl(orderId, supplierId)
+ * Reverts a 'sent_to_3pl' group back to 'assigned' (mistake correction).
+ */
+function unmarkGroupSentTo3pl(orderId, supplierId) {
+  return getDb().prepare(`
+    UPDATE line_item_assignments
+    SET status = 'assigned'
+    WHERE order_id = ? AND supplier_id = ? AND status = 'sent_to_3pl'
+  `).run(orderId, supplierId);
+}
+
 function markGroupFulfilled(orderId, supplierId, shopifyFulfillmentId) {
   return getDb().prepare(`
     UPDATE line_item_assignments
@@ -190,6 +216,7 @@ function getAssignmentStats(supplierId) {
       COUNT(*) as total,
       SUM(CASE WHEN status = 'assigned'        THEN 1 ELSE 0 END) as assigned,
       SUM(CASE WHEN status = 'tracking_added'  THEN 1 ELSE 0 END) as tracking_added,
+      SUM(CASE WHEN status = 'sent_to_3pl'     THEN 1 ELSE 0 END) as sent_to_3pl,
       SUM(CASE WHEN status = 'fulfilled'       THEN 1 ELSE 0 END) as fulfilled,
       SUM(CASE WHEN status = 'unassigned'      THEN 1 ELSE 0 END) as unassigned
     FROM line_item_assignments
@@ -282,6 +309,8 @@ module.exports = {
   updateAssignmentTracking,
   clearAssignmentTracking,
   markGroupFulfilled,
+  markGroupSentTo3pl,
+  unmarkGroupSentTo3pl,
   getUnnotifiedAssignments,
   markNotified,
   getAssignmentStats,

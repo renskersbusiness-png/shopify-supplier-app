@@ -12,6 +12,7 @@ const db       = require('../db/orders');
 const suppDb   = require('../db/suppliers');
 const asgDb    = require('../db/assignments');
 const skuDb    = require('../db/supplier_skus');
+const settingsDb = require('../db/settings');
 const { reassignLineItem }             = require('../services/assignment');
 const { notifySupplier }               = require('../services/notifications');
 const { createFulfillmentForLineItems, fetchOrderFromShopify,
@@ -495,6 +496,44 @@ router.post('/inventory/setup-location', adminOnly, async (_req, res) => {
   } catch (err) {
     console.error('[API] POST /inventory/setup-location error:', err.message);
     res.status(502).json({ error: err.message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SETTINGS  (admin only) — 3PL address, feature flags
+// ══════════════════════════════════════════════════════════════════════════════
+
+// GET /api/settings/threepl — returns the configured 3PL warehouse address (or null)
+router.get('/settings/threepl', adminOnly, (_req, res) => {
+  res.json({
+    enabled: process.env.THREEPL_FLOW === 'true',
+    address: settingsDb.getJson('threepl_address'),
+  });
+});
+
+// PUT /api/settings/threepl — set or update the 3PL warehouse address
+// Body: { name, address1, address2, city, province_code, zip, country, phone }
+router.put('/settings/threepl', adminOnly, (req, res) => {
+  try {
+    const { name, address1, address2, city, province_code, zip, country, phone } = req.body || {};
+    if (!name || !address1 || !city || !zip || !country) {
+      return res.status(400).json({ error: 'name, address1, city, zip, country are required' });
+    }
+    const addr = {
+      name:          String(name).trim(),
+      address1:      String(address1).trim(),
+      address2:      address2      ? String(address2).trim()      : null,
+      city:          String(city).trim(),
+      province_code: province_code ? String(province_code).trim() : null,
+      zip:           String(zip).trim(),
+      country:       String(country).trim(),
+      phone:         phone         ? String(phone).trim()         : null,
+    };
+    settingsDb.setJson('threepl_address', addr);
+    res.json({ success: true, address: addr });
+  } catch (err) {
+    console.error('[API] PUT /settings/threepl error:', err);
+    res.status(500).json({ error: 'Failed to save 3PL address' });
   }
 });
 

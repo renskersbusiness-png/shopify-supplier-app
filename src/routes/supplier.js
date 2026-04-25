@@ -10,7 +10,9 @@ const router  = express.Router();
 
 const { requireSupplierSession } = require('../middleware/auth');
 const asgDb = require('../db/assignments');
-const { updateAssignmentTracking, clearAssignmentTracking, markGroupFulfilled } = require('../db/assignments');
+const { updateAssignmentTracking, clearAssignmentTracking, markGroupFulfilled,
+        markGroupSentTo3pl, unmarkGroupSentTo3pl } = require('../db/assignments');
+const settingsDb = require('../db/settings');
 const { getOrderById, logActivity }     = require('../db/orders');
 const { getSupplierById }               = require('../db/suppliers');
 const skuDb                             = require('../db/supplier_skus');
@@ -51,10 +53,69 @@ router.get('/assignments', (req, res) => {
       .map(stripPricing);
     const stats = asgDb.getAssignmentStats(supplierId);
 
-    res.json({ assignments, stats, page: parseInt(page) });
+    // 3PL flow: when enabled, suppliers ship to 3PL warehouse instead of customer.
+    // Toggleable via env var so we can revert easily.
+    const threeplEnabled = process.env.THREEPL_FLOW === 'true';
+    const threeplAddress = threeplEnabled ? settingsDb.getJson('threepl_address') : null;
+
+    res.json({
+      assignments,
+      stats,
+      page: parseInt(page),
+      threepl_enabled: threeplEnabled,
+      threepl_address: threeplAddress,
+    });
   } catch (err) {
     console.error('[Supplier API] GET /assignments error:', err);
     res.status(500).json({ error: 'Failed to fetch assignments' });
+  }
+});
+
+// ── POST /api/supplier/sent — mark order as sent to 3PL ───────────────────────
+// 3PL flow: supplier marks that they've shipped the goods to the 3PL warehouse.
+// Local-only state change, does NOT push to Shopify (3PL fulfills there).
+
+router.post('/sent', (req, res) => {
+  try {
+    if (process.env.THREEPL_FLOW !== 'true') {
+      return res.status(400).json({ error: '3PL flow is not enabled' });
+    }
+    const { order_id } = req.body;
+    const supplierId   = req.session.supplierId;
+    if (!order_id) return res.status(400).json({ error: 'order_id is required' });
+
+    const order = getOrderById(order_id);
+    if (!order) return res.status(404).json({ error: 'Order not found' });
+    if (order.financial_status !== 'paid') {
+      return res.status(403).json({ error: 'Order is not fully paid' });
+    }
+
+    const result = markGroupSentTo3pl(order_id, supplierId);
+    logActivity(order.id, 'sent_to_3pl',
+      `Supplier ${supplierId} marked ${result.changes} item(s) as sent to 3PL`);
+
+    console.log(`[sent] order_id=${order_id} supplier=${supplierId} (${result.changes} items)`);
+    res.json({ success: true, marked: result.changes });
+  } catch (err) {
+    console.error('[sent] failed →', err.message);
+    res.status(500).json({ error: 'Failed to mark as sent' });
+  }
+});
+
+// ── DELETE /api/supplier/sent — undo "Mark as Sent" ───────────────────────────
+
+router.delete('/sent', (req, res) => {
+  try {
+    const { order_id } = req.body;
+    const supplierId   = req.session.supplierId;
+    if (!order_id) return res.status(400).json({ error: 'order_id is required' });
+
+    const result = unmarkGroupSentTo3pl(order_id, supplierId);
+    console.log(`[sent] reverted order_id=${order_id} supplier=${supplierId} (${result.changes} items)`);
+    res.json({ success: true, reverted: result.changes });
+  } catch (err) {
+    console.error('[sent] revert failed →', err.message);
+    res.status(500).json({ error: 'Failed to revert' });
   }
 });
 

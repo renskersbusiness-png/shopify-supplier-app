@@ -206,6 +206,16 @@ function runMigrations(db) {
     END
   `);
 
+  // settings: simple key-value store for app-wide config that admins can edit
+  // without a redeploy (e.g. 3PL warehouse address).
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS settings (
+      key        TEXT PRIMARY KEY,
+      value      TEXT,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `);
+
   console.log('[DB] Schema ready');
 }
 
