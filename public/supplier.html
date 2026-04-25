@@ -332,15 +332,36 @@ function renderOrderCard(group) {
   // 3PL flow: simpler "Mark as Sent" UI, no Shopify tracking integration
   let trackingSection;
   if (threeplEnabled) {
+    const sentInfo = items[0];
     trackingSection = isSent ? `
-      <div class="success-box" style="margin-top:14px;display:flex;justify-content:space-between;align-items:center;gap:10px">
-        <span>✅ Sent to 3PL — the warehouse will fulfill in Shopify.</span>
-        <button class="btn btn-secondary btn-sm" onclick="unmarkSent(${group.order_id}, this)" style="color:#b91c1c;border-color:#fecaca">↩ Undo</button>
+      <div class="success-box" style="margin-top:14px">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px">
+          <div>
+            ✅ <strong>Sent to 3PL</strong> — the warehouse will fulfill in Shopify.
+            ${sentInfo?.tracking_number ? `<div style="margin-top:6px;font-size:12px">Internal tracking: <strong>${esc(sentInfo.tracking_carrier||'')}</strong> ${esc(sentInfo.tracking_number)}</div>` : ''}
+          </div>
+          <button class="btn btn-secondary btn-sm" onclick="unmarkSent(${group.order_id}, this)" style="color:#b91c1c;border-color:#fecaca">↩ Undo</button>
+        </div>
       </div>
     ` : `
       <div class="tracking-form" id="tracking-form-${group.order_id}">
         <h3>🏢 Sent to 3PL?</h3>
-        <p style="font-size:13px;color:#6b7280;margin-bottom:12px">Once you've shipped these items to the 3PL warehouse, click below. The 3PL will handle final shipment to the customer and fulfill in Shopify.</p>
+        <p style="font-size:13px;color:#6b7280;margin-bottom:12px">Enter the tracking number from supplier → 3PL. This is for internal use only — it will <u>not</u> be sent to the customer or pushed to Shopify. The 3PL adds the customer-facing tracking when shipping the final order.</p>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Carrier</label>
+            <select id="sent-carrier-${group.order_id}" onchange="trackingState[${group.order_id}].carrier=this.value">
+              <option value="">Select carrier…</option>
+              ${['DHL','FedEx','UPS','USPS','SF Express','Cainiao','Yanwen','4PX','China Post','ePacket','Other'].map(c =>
+                `<option value="${c}"${ts.carrier===c?' selected':''}>${c}</option>`
+              ).join('')}
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Tracking Number</label>
+            <input type="text" id="sent-tn-${group.order_id}" value="${esc(ts.number)}" placeholder="optional" oninput="trackingState[${group.order_id}].number=this.value">
+          </div>
+        </div>
         <div class="form-actions">
           <button class="btn btn-success btn-sm" onclick="markSent(${group.order_id}, this)">
             📦 Mark as Sent to 3PL
@@ -478,6 +499,7 @@ async function saveTracking(orderId, btn) {
 }
 
 async function markSent(orderId, btn) {
+  const ts = trackingState[orderId] || {};
   if (!confirm('Mark this order as sent to the 3PL warehouse?')) return;
   btn.disabled    = true;
   const orig      = btn.textContent;
@@ -485,7 +507,11 @@ async function markSent(orderId, btn) {
   try {
     await api('/api/supplier/sent', {
       method: 'POST',
-      body:   JSON.stringify({ order_id: orderId }),
+      body:   JSON.stringify({
+        order_id:         orderId,
+        tracking_number:  ts.number?.trim() || null,
+        tracking_carrier: ts.carrier        || null,
+      }),
     });
     toast('Marked as sent to 3PL', 'success');
     await loadAssignments();

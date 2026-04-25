@@ -160,12 +160,30 @@ function clearAssignmentTracking(orderId, supplierId) {
 }
 
 /**
- * markGroupSentTo3pl(orderId, supplierId)
+ * markGroupSentTo3pl(orderId, supplierId, tracking?)
  * Marks supplier's items in an order as sent to 3PL. Local state only —
  * does NOT push anything to Shopify (3PL handles fulfillment there).
  * Only moves items from 'assigned' → 'sent_to_3pl'.
+ *
+ * Optional `tracking` param ({ tracking_number, tracking_carrier, tracking_url })
+ * stores the supplier→3PL leg tracking info on the assignment rows.
  */
-function markGroupSentTo3pl(orderId, supplierId) {
+function markGroupSentTo3pl(orderId, supplierId, tracking = null) {
+  if (tracking && (tracking.tracking_number || tracking.tracking_carrier)) {
+    return getDb().prepare(`
+      UPDATE line_item_assignments
+      SET status = 'sent_to_3pl',
+          tracking_number  = ?,
+          tracking_carrier = ?,
+          tracking_url     = ?
+      WHERE order_id = ? AND supplier_id = ? AND status = 'assigned'
+    `).run(
+      tracking.tracking_number  || null,
+      tracking.tracking_carrier || null,
+      tracking.tracking_url     || null,
+      orderId, supplierId
+    );
+  }
   return getDb().prepare(`
     UPDATE line_item_assignments
     SET status = 'sent_to_3pl'

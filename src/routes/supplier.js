@@ -81,7 +81,7 @@ router.post('/sent', (req, res) => {
     if (process.env.THREEPL_FLOW !== 'true') {
       return res.status(400).json({ error: '3PL flow is not enabled' });
     }
-    const { order_id } = req.body;
+    const { order_id, tracking_number, tracking_carrier, tracking_url } = req.body;
     const supplierId   = req.session.supplierId;
     if (!order_id) return res.status(400).json({ error: 'order_id is required' });
 
@@ -91,9 +91,14 @@ router.post('/sent', (req, res) => {
       return res.status(403).json({ error: 'Order is not fully paid' });
     }
 
-    const result = markGroupSentTo3pl(order_id, supplierId);
+    const tracking = (tracking_number || tracking_carrier || tracking_url)
+      ? { tracking_number, tracking_carrier, tracking_url }
+      : null;
+
+    const result = markGroupSentTo3pl(order_id, supplierId, tracking);
     logActivity(order.id, 'sent_to_3pl',
-      `Supplier ${supplierId} marked ${result.changes} item(s) as sent to 3PL`);
+      `Supplier ${supplierId} marked ${result.changes} item(s) as sent to 3PL` +
+      (tracking ? ` (${tracking_carrier || ''} ${tracking_number || ''})` : ''));
 
     console.log(`[sent] order_id=${order_id} supplier=${supplierId} (${result.changes} items)`);
     res.json({ success: true, marked: result.changes });
