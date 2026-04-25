@@ -169,6 +169,9 @@ function clearAssignmentTracking(orderId, supplierId) {
  * stores the supplier→3PL leg tracking info on the assignment rows.
  */
 function markGroupSentTo3pl(orderId, supplierId, tracking = null) {
+  // Accept any non-final state so legacy 'tracking_added' rows from the
+  // previous flow can be transitioned to 'sent_to_3pl' as well.
+  const where = `WHERE order_id = ? AND supplier_id = ? AND status NOT IN ('sent_to_3pl','fulfilled','cancelled')`;
   if (tracking && (tracking.tracking_number || tracking.tracking_carrier)) {
     return getDb().prepare(`
       UPDATE line_item_assignments
@@ -176,7 +179,7 @@ function markGroupSentTo3pl(orderId, supplierId, tracking = null) {
           tracking_number  = ?,
           tracking_carrier = ?,
           tracking_url     = ?
-      WHERE order_id = ? AND supplier_id = ? AND status = 'assigned'
+      ${where}
     `).run(
       tracking.tracking_number  || null,
       tracking.tracking_carrier || null,
@@ -187,7 +190,7 @@ function markGroupSentTo3pl(orderId, supplierId, tracking = null) {
   return getDb().prepare(`
     UPDATE line_item_assignments
     SET status = 'sent_to_3pl'
-    WHERE order_id = ? AND supplier_id = ? AND status = 'assigned'
+    ${where}
   `).run(orderId, supplierId);
 }
 
@@ -198,7 +201,10 @@ function markGroupSentTo3pl(orderId, supplierId, tracking = null) {
 function unmarkGroupSentTo3pl(orderId, supplierId) {
   return getDb().prepare(`
     UPDATE line_item_assignments
-    SET status = 'assigned'
+    SET status = 'assigned',
+        tracking_number  = NULL,
+        tracking_carrier = NULL,
+        tracking_url     = NULL
     WHERE order_id = ? AND supplier_id = ? AND status = 'sent_to_3pl'
   `).run(orderId, supplierId);
 }

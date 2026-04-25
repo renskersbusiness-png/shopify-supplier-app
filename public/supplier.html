@@ -206,7 +206,20 @@ function toast(msg, type = '') {
 }
 
 function esc(s) { return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-function statusBadge(s) { return `<span class="badge badge-${esc(s)}">${esc(s.replace('_',' '))}</span>`; }
+function statusBadge(s) {
+  // In the 3PL flow, legacy 'tracking_added' rows are equivalent to 'assigned'
+  // (they pre-date the new flow and the supplier still needs to mark as sent).
+  const labels = {
+    assigned:       { cls: 'assigned',       text: 'Action needed' },
+    tracking_added: { cls: 'assigned',       text: 'Action needed' },
+    sent_to_3pl:    { cls: 'sent_to_3pl',    text: 'Sent to 3PL' },
+    fulfilled:      { cls: 'fulfilled',      text: 'Fulfilled' },
+    unassigned:     { cls: 'unassigned',     text: 'Unassigned' },
+    cancelled:      { cls: 'unassigned',     text: 'Cancelled' },
+  };
+  const m = labels[s] || { cls: esc(s), text: esc(s.replace('_',' ')) };
+  return `<span class="badge badge-${m.cls}">${m.text}</span>`;
+}
 function fmtDate(d) { if (!d) return ''; return new Date(d).toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'}); }
 
 async function loadMe() {
@@ -226,8 +239,8 @@ async function loadAssignments() {
     threeplEnabled = !!r.threepl_enabled;
     threeplAddress = r.threepl_address || null;
     const stats = r.stats || {};
-    document.getElementById('stat-assigned').textContent  = stats.assigned  || 0;
-    document.getElementById('stat-tracking').textContent  = (threeplEnabled ? (stats.sent_to_3pl || 0) : (stats.tracking_added || 0));
+    document.getElementById('stat-assigned').textContent  = (stats.assigned || 0) + (threeplEnabled ? (stats.tracking_added || 0) : 0);
+    document.getElementById('stat-tracking').textContent  = (threeplEnabled ? (stats.sent_to_3pl || 0) : ((stats.tracking_added || 0) + (stats.sent_to_3pl || 0)));
     document.getElementById('stat-fulfilled').textContent = stats.fulfilled  || 0;
     // Switch label of middle stat card based on flow
     const trackingStatLabel = document.querySelector('#stat-tracking')?.previousElementSibling;
@@ -427,7 +440,7 @@ function renderOrderCard(group) {
     ? '<span class="badge badge-fulfilled">Fulfilled</span>'
     : (threeplEnabled
         ? (isSent
-            ? '<span class="badge badge-tracking_added">Sent to 3PL</span>'
+            ? '<span class="badge badge-sent_to_3pl">Sent to 3PL</span>'
             : '<span class="badge badge-assigned">Action needed</span>')
         : (hasTracking
             ? '<span class="badge badge-tracking_added">Tracking Added</span>'
