@@ -503,11 +503,14 @@ router.post('/inventory/setup-location', adminOnly, async (_req, res) => {
 // SETTINGS  (admin only) — 3PL address, feature flags
 // ══════════════════════════════════════════════════════════════════════════════
 
-// GET /api/settings/threepl — returns the configured 3PL warehouse address (or null)
+// GET /api/settings/threepl — returns the 3PL warehouse address.
+// If no DB override is set, falls back to the hardcoded default.
 router.get('/settings/threepl', adminOnly, (_req, res) => {
+  const override = settingsDb.getJson('threepl_address');
   res.json({
-    enabled: process.env.THREEPL_FLOW === 'true',
-    address: settingsDb.getJson('threepl_address'),
+    enabled:     process.env.THREEPL_FLOW === 'true',
+    address:     settingsDb.getThreeplAddress(),
+    is_default:  !override,
   });
 });
 

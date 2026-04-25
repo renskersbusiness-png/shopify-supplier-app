@@ -1152,7 +1152,7 @@ async function loadSettingsTab() {
     const r = await api('/api/settings/threepl');
     const flagEl = document.getElementById('threepl-flag');
     if (r.enabled) {
-      flagEl.textContent = '3PL flow enabled';
+      flagEl.textContent = r.is_default ? '3PL flow enabled · using default address' : '3PL flow enabled · custom address';
       flagEl.style.background = '#d1fae5';
       flagEl.style.color = '#065f46';
     } else {

@@ -6,6 +6,23 @@
 
 const { getDb } = require('./connection');
 
+// Default 3PL warehouse — used when no override is set in the settings table.
+// Admins can override via PUT /api/settings/threepl.
+const DEFAULT_THREEPL_ADDRESS = {
+  name:          'Mr Deng 邓华(W) 收',
+  address1:      '捷威工业园11栋202, 平吉大道57号',
+  address2:      '平湖街道, 龙岗区',
+  city:          '深圳市 (Shenzhen)',
+  province_code: 'GD',
+  zip:           '518000',
+  country:       'China',
+  phone:         '+86 18922840297',
+};
+
+function getThreeplAddress() {
+  return getJson('threepl_address') || DEFAULT_THREEPL_ADDRESS;
+}
+
 function getSetting(key) {
   const row = getDb().prepare('SELECT value FROM settings WHERE key = ?').get(key);
   return row ? row.value : null;
@@ -28,4 +45,4 @@ function setJson(key, obj) {
   return setSetting(key, JSON.stringify(obj));
 }
 
-module.exports = { getSetting, setSetting, getJson, setJson };
+module.exports = { getSetting, setSetting, getJson, setJson, getThreeplAddress, DEFAULT_THREEPL_ADDRESS };

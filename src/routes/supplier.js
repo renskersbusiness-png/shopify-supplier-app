@@ -54,9 +54,10 @@ router.get('/assignments', (req, res) => {
     const stats = asgDb.getAssignmentStats(supplierId);
 
     // 3PL flow: when enabled, suppliers ship to 3PL warehouse instead of customer.
-    // Toggleable via env var so we can revert easily.
+    // Toggleable via env var so we can revert easily. Address falls back to a
+    // hardcoded default if no override is set in the settings table.
     const threeplEnabled = process.env.THREEPL_FLOW === 'true';
-    const threeplAddress = threeplEnabled ? settingsDb.getJson('threepl_address') : null;
+    const threeplAddress = threeplEnabled ? settingsDb.getThreeplAddress() : null;
 
     res.json({
       assignments,
