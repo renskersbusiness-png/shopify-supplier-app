@@ -333,10 +333,11 @@ router.get('/inventory', async (req, res) => {
 });
 
 // ── PATCH /api/supplier/inventory/:id ─────────────────────────────────────────
-// Supplier updates stock for a SKU. Saves locally and auto-syncs to Shopify
-// if the SKU is linked and a location is configured.
+// Supplier updates stock locally only. Pushing to Shopify is a deliberate
+// action via POST /inventory/:id/sync — keeping these split prevents the
+// portal from overwriting Shopify's automatic sale-decrements.
 
-router.patch('/inventory/:id', async (req, res) => {
+router.patch('/inventory/:id', (req, res) => {
   try {
     const supplierId = req.session.supplierId;
     const entry      = skuDb.getSkuById(req.params.id);
@@ -353,22 +354,9 @@ router.patch('/inventory/:id', async (req, res) => {
       return res.status(400).json({ error: 'stock_quantity must be a non-negative integer' });
     }
 
-    const locationId = process.env.SHOPIFY_LOCATION_ID;
-    let synced = false;
-    let syncedAt = null;
-
-    // Auto-push to Shopify if the SKU is linked
-    if (locationId && entry.shopify_inventory_item_id) {
-      await setInventoryLevel(entry.shopify_inventory_item_id, locationId, qty);
-      syncedAt = new Date().toISOString();
-      synced   = true;
-      console.log(`[inventory] supplier=${supplierId} sku=${entry.sku} stock=${qty} → synced to Shopify`);
-    } else {
-      console.log(`[inventory] supplier=${supplierId} sku=${entry.sku} stock=${qty} (local only)`);
-    }
-
-    skuDb.updateStock(entry.id, qty, syncedAt);
-    res.json({ success: true, sku: entry.sku, stock_quantity: qty, synced });
+    skuDb.updateStock(entry.id, qty);
+    console.log(`[inventory] supplier=${supplierId} sku=${entry.sku} stock=${qty} (local only)`);
+    res.json({ success: true, sku: entry.sku, stock_quantity: qty, synced: false });
   } catch (err) {
     console.error('[Supplier API] PATCH /inventory/:id error:', err);
     res.status(500).json({ error: err.message || 'Failed to update stock' });
