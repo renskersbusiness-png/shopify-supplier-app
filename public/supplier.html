@@ -108,6 +108,23 @@
 
     .inv-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 
+    /* Bulk select */
+    .bulk-bar {
+      position: fixed; left: 0; right: 0; bottom: 0;
+      background: white; border-top: 1px solid #e5e7eb;
+      box-shadow: 0 -4px 16px rgba(0,0,0,0.06);
+      padding: 12px 20px; z-index: 200;
+      display: none; align-items: center; gap: 10px; flex-wrap: wrap;
+    }
+    .bulk-bar.show { display: flex; }
+    .bulk-bar .count { font-weight: 600; font-size: 13px; color: #111827; }
+    .bulk-bar select, .bulk-bar input { padding: 7px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px; background: white; outline: none; }
+    .bulk-bar input { flex: 1; min-width: 120px; }
+    .bulk-bar select { min-width: 130px; }
+    .bulk-bar .spacer { flex: 1; }
+    .order-checkbox { width: 18px; height: 18px; cursor: pointer; accent-color: #6366f1; flex: 0 0 auto; }
+    .order-card.selected { outline: 2px solid #6366f1; outline-offset: -1px; }
+
     /* ── Mobile ─────────────────────────────────────────────────────────── */
     @media (max-width: 640px) {
       body { font-size: 13px; }
@@ -151,6 +168,12 @@
       .inv-qty-input { width: 70px; font-size: 16px; }
 
       .toast { left: 12px; right: 12px; bottom: 16px; }
+
+      .bulk-bar { padding: 10px 12px; gap: 8px; }
+      .bulk-bar .count { width: 100%; }
+      .bulk-bar select, .bulk-bar input { font-size: 16px; }
+      .bulk-bar .spacer { display: none; }
+      .bulk-bar .btn { flex: 1 1 auto; justify-content: center; }
     }
   </style>
 </head>
@@ -186,11 +209,16 @@
 
     <!-- Filter tabs (sticky) -->
     <div class="filter-tabs-wrapper">
-      <div class="filter-tabs">
-        <button class="filter-tab active" onclick="setFilter('', this)">All</button>
-        <button class="filter-tab" onclick="setFilter('assigned', this)">To Do</button>
-        <button class="filter-tab" onclick="setFilter('tracking_added', this)">Tracking Added</button>
-        <button class="filter-tab" onclick="setFilter('fulfilled', this)">Fulfilled</button>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <div class="filter-tabs">
+          <button class="filter-tab active" onclick="setFilter('', this)">All</button>
+          <button class="filter-tab" onclick="setFilter('assigned', this)">To Do</button>
+          <button class="filter-tab" onclick="setFilter('tracking_added', this)">Tracking Added</button>
+          <button class="filter-tab" onclick="setFilter('fulfilled', this)">Fulfilled</button>
+        </div>
+        <button class="btn btn-secondary btn-sm" id="select-all-btn" onclick="selectAllOutstanding()" style="display:none">
+          ☑ Select all outstanding
+        </button>
       </div>
     </div>
 
@@ -221,6 +249,21 @@
 
 </div>
 
+<!-- Bulk action bar -->
+<div class="bulk-bar" id="bulk-bar" role="region" aria-label="Bulk action bar">
+  <span class="count" id="bulk-count">0 selected</span>
+  <select id="bulk-carrier">
+    <option value="">Carrier…</option>
+    <option>DHL</option><option>FedEx</option><option>UPS</option><option>USPS</option>
+    <option>SF Express</option><option>Cainiao</option><option>Yanwen</option>
+    <option>4PX</option><option>China Post</option><option>ePacket</option><option>Other</option>
+  </select>
+  <input type="text" id="bulk-tracking" placeholder="One tracking number for all selected orders">
+  <span class="spacer"></span>
+  <button class="btn btn-secondary btn-sm" onclick="clearBulkSelection()">Cancel</button>
+  <button class="btn btn-success btn-sm" id="bulk-submit-btn" onclick="submitBulkSent(this)">📦 Mark all as Sent</button>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -237,6 +280,90 @@ const useLegacyFlow = {};
 function toggleLegacyFlow(orderId) {
   useLegacyFlow[orderId] = !useLegacyFlow[orderId];
   loadAssignments();
+}
+
+// Bulk selection — set of order_ids the supplier wants to mark as sent at once
+const bulkSelection = new Set();
+
+function toggleBulkSelect(orderId, checked, ev) {
+  if (ev) ev.stopPropagation();
+  if (checked) bulkSelection.add(orderId);
+  else         bulkSelection.delete(orderId);
+  // Reflect highlight on the card
+  const card = document.querySelector(`[data-order-card="${orderId}"]`);
+  if (card) card.classList.toggle('selected', checked);
+  refreshBulkBar();
+}
+
+function refreshBulkBar() {
+  const bar  = document.getElementById('bulk-bar');
+  const cnt  = document.getElementById('bulk-count');
+  const n    = bulkSelection.size;
+  cnt.textContent = `${n} order${n === 1 ? '' : 's'} selected`;
+  bar.classList.toggle('show', n > 0);
+  // Pad bottom of body so cards aren't hidden behind the bar
+  document.body.style.paddingBottom = n > 0 ? '90px' : '';
+}
+
+function clearBulkSelection() {
+  bulkSelection.clear();
+  document.querySelectorAll('.order-card.selected').forEach(el => el.classList.remove('selected'));
+  document.querySelectorAll('.order-checkbox:checked').forEach(el => { el.checked = false; });
+  refreshBulkBar();
+}
+
+function selectAllOutstanding() {
+  document.querySelectorAll('.order-checkbox[data-outstanding="1"]').forEach(cb => {
+    if (!cb.checked) {
+      cb.checked = true;
+      const orderId = parseInt(cb.closest('[data-order-card]')?.getAttribute('data-order-card'), 10);
+      if (orderId) {
+        bulkSelection.add(orderId);
+        cb.closest('.order-card')?.classList.add('selected');
+      }
+    }
+  });
+  refreshBulkBar();
+}
+
+function refreshSelectAllVisibility() {
+  const btn = document.getElementById('select-all-btn');
+  if (!btn) return;
+  const has = !!document.querySelector('.order-checkbox[data-outstanding="1"]');
+  btn.style.display = has ? '' : 'none';
+}
+
+async function submitBulkSent(btn) {
+  const carrier = document.getElementById('bulk-carrier').value.trim();
+  const number  = document.getElementById('bulk-tracking').value.trim();
+  if (!bulkSelection.size) return;
+  if (!number && !carrier) {
+    if (!confirm('No carrier or tracking entered. Mark these orders as sent without a tracking number?')) return;
+  }
+  btn.disabled = true;
+  const orig   = btn.textContent;
+  btn.textContent = 'Marking…';
+  try {
+    const r = await api('/api/supplier/sent/bulk', {
+      method: 'POST',
+      body:   JSON.stringify({
+        order_ids:        [...bulkSelection],
+        tracking_number:  number  || null,
+        tracking_carrier: carrier || null,
+      }),
+    });
+    toast(`Marked ${r.orders} order(s) as sent to 3PL`, 'success');
+    document.getElementById('bulk-carrier').value = '';
+    document.getElementById('bulk-tracking').value = '';
+    bulkSelection.clear();
+    await loadAssignments();
+    refreshBulkBar();
+  } catch (e) {
+    toast(e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = orig;
+  }
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -335,6 +462,7 @@ async function loadAssignments() {
     }
 
     list.innerHTML = [...orderMap.values()].map(group => renderOrderCard(group)).join('');
+    refreshSelectAllVisibility();
   } catch(e) {
     list.innerHTML = `<div style="color:#ef4444;padding:20px;text-align:center">Error: ${esc(e.message)}</div>`;
   }
@@ -518,12 +646,24 @@ function renderOrderCard(group) {
             ? '<span class="badge badge-tracking_added">Tracking Added</span>'
             : '<span class="badge badge-assigned">Action needed</span>'));
 
+  // Outstanding = action needed (not sent yet, not fulfilled, not in legacy flow override)
+  const isOutstanding = threeplEnabled && !showLegacyForThisOrder && !isFulfilled && !isSent;
+  const isChecked     = bulkSelection.has(group.order_id);
+
   return `
-    <div class="order-card">
+    <div class="order-card${isChecked ? ' selected' : ''}" data-order-card="${group.order_id}">
       <div class="order-card-header" onclick="toggleOrder(${group.order_id})">
-        <div>
-          <div class="order-num">${esc(group.shopify_order_num)}</div>
-          <div class="order-meta">${esc(group.customer_name||'—')} · ${items.length} item(s) · ${fmtDate(group.created_at)}</div>
+        <div style="display:flex;align-items:center;gap:10px;min-width:0">
+          ${isOutstanding ? `
+            <input type="checkbox" class="order-checkbox" data-outstanding="1"
+              ${isChecked ? 'checked' : ''}
+              onclick="event.stopPropagation()"
+              onchange="toggleBulkSelect(${group.order_id}, this.checked, event)"
+              aria-label="Select order ${esc(group.shopify_order_num)}">` : ''}
+          <div style="min-width:0">
+            <div class="order-num">${esc(group.shopify_order_num)}</div>
+            <div class="order-meta">${esc(group.customer_name||'—')} · ${items.length} item(s) · ${fmtDate(group.created_at)}</div>
+          </div>
         </div>
         <div style="display:flex;align-items:center;gap:8px">
           ${headerBadge}

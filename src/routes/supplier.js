@@ -101,6 +101,49 @@ router.post('/sent', (req, res) => {
   }
 });
 
+// ── POST /api/supplier/sent/bulk — mark MULTIPLE orders as sent with shared tracking ─
+// Used when one shipment to the 3PL covers many orders (one tracking number, many orders).
+
+router.post('/sent/bulk', (req, res) => {
+  try {
+    const { order_ids, tracking_number, tracking_carrier, tracking_url } = req.body;
+    const supplierId = req.session.supplierId;
+
+    if (!Array.isArray(order_ids) || !order_ids.length) {
+      return res.status(400).json({ error: 'order_ids must be a non-empty array' });
+    }
+
+    const tracking = (tracking_number || tracking_carrier || tracking_url)
+      ? { tracking_number, tracking_carrier, tracking_url }
+      : null;
+
+    let totalMarked = 0;
+    const skipped = [];
+    for (const orderId of order_ids) {
+      const order = getOrderById(orderId);
+      if (!order) { skipped.push({ order_id: orderId, reason: 'not found' }); continue; }
+      if (order.financial_status !== 'paid') {
+        skipped.push({ order_id: orderId, reason: 'not paid' }); continue;
+      }
+      const result = markGroupSentTo3pl(orderId, supplierId, tracking);
+      if (result.changes) {
+        totalMarked += result.changes;
+        logActivity(order.id, 'sent_to_3pl',
+          `Supplier ${supplierId} bulk-marked ${result.changes} item(s) as sent to 3PL` +
+          (tracking ? ` (${tracking_carrier || ''} ${tracking_number || ''})` : ''));
+      } else {
+        skipped.push({ order_id: orderId, reason: 'no items in transitionable state' });
+      }
+    }
+
+    console.log(`[sent/bulk] supplier=${supplierId} orders=${order_ids.length} items_marked=${totalMarked} skipped=${skipped.length}`);
+    res.json({ success: true, marked: totalMarked, orders: order_ids.length, skipped });
+  } catch (err) {
+    console.error('[sent/bulk] failed →', err.message);
+    res.status(500).json({ error: 'Bulk mark as sent failed' });
+  }
+});
+
 // ── DELETE /api/supplier/sent — undo "Mark as Sent" ───────────────────────────
 
 router.delete('/sent', (req, res) => {
