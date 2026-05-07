@@ -20,12 +20,15 @@ const { getAccessToken } = require('../src/shopify/auth');
 const SKU = '08720892501769';
 
 const FULFILLMENTS = [
-  { name: 'Zoomly-1793', tracking: 'SWX619570000055108052',  carrier: 'Other' },
-  { name: 'Zoomly-1796', tracking: 'YWMIA010070243567',      carrier: 'Yanwen' },
-  { name: 'Zoomly-1799', tracking: 'GFUS01048494210369',     carrier: 'Other' },
-  { name: 'Zoomly-1800', tracking: 'SWX521990000055108060',  carrier: 'Other' },
-  { name: 'Zoomly-1801', tracking: '9235990411372801563347', carrier: 'USPS' },
-  { name: 'Zoomly-1803', tracking: 'GFUS01048418335236',     carrier: 'Other' },
+  { name: 'Zoomly-1809', tracking: 'FF604300000049499', carrier: 'Other' },
+  { name: 'Zoomly-1815', tracking: 'FF605050000051450', carrier: 'Other' },
+  { name: 'Zoomly-1822', tracking: 'FF605050000051436', carrier: 'Other' },
+  { name: 'Zoomly-1824', tracking: 'FF605050000051438', carrier: 'Other' },
+  { name: 'Zoomly-1825', tracking: 'FF605050000051439', carrier: 'Other' },
+  { name: 'Zoomly-1826', tracking: 'FF605050000051454', carrier: 'Other' },
+  { name: 'Zoomly-1829', tracking: 'FF605050000051457', carrier: 'Other' },
+  { name: 'Zoomly-1836', tracking: 'FF605060000051893', carrier: 'Other' },
+  { name: 'Zoomly-1838', tracking: 'FF605060000051891', carrier: 'Other' },
 ];
 
 const API_VERSION = '2025-01';
