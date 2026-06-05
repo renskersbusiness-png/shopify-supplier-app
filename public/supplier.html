@@ -75,6 +75,7 @@
     .badge-sent_to_3pl   { background: #ede9fe; color: #7c3aed; } .badge-sent_to_3pl::before   { background: #7c3aed; }
     .badge-fulfilled     { background: #d1fae5; color: #059669; } .badge-fulfilled::before     { background: #059669; }
     .badge-unassigned    { background: #f3f4f6; color: #6b7280; } .badge-unassigned::before    { background: #9ca3af; }
+    .badge-cancelled     { background: #fee2e2; color: #dc2626; } .badge-cancelled::before     { background: #dc2626; }
 
     .info-box { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 10px 14px; font-size: 13px; color: #1e40af; margin-bottom: 14px; }
     .success-box { background: #d1fae5; border: 1px solid #6ee7b7; border-radius: 8px; padding: 10px 14px; font-size: 13px; color: #065f46; margin-bottom: 14px; }
@@ -397,7 +398,7 @@ function statusBadge(s) {
     sent_to_3pl:    { cls: 'sent_to_3pl',    text: 'Sent to 3PL' },
     fulfilled:      { cls: 'fulfilled',      text: 'Fulfilled' },
     unassigned:     { cls: 'unassigned',     text: 'Unassigned' },
-    cancelled:      { cls: 'unassigned',     text: 'Cancelled' },
+    cancelled:      { cls: 'cancelled',      text: 'Cancelled' },
   };
   const m = labels[s] || { cls: esc(s), text: esc(s.replace('_',' ')) };
   return `<span class="badge badge-${m.cls}">${m.text}</span>`;
@@ -474,6 +475,7 @@ function renderOrderCard(group) {
   const hasTracking = items[0]?.tracking_number;
   const isFulfilled = items.every(i => i.status === 'fulfilled');
   const isSent      = items.every(i => i.status === 'sent_to_3pl' || i.status === 'fulfilled');
+  const isCancelled = items.length > 0 && items.every(i => i.status === 'cancelled');
 
   // Pre-fill tracking state
   if (!trackingState[group.order_id]) {
@@ -533,7 +535,12 @@ function renderOrderCard(group) {
   // pre-existing orders that need to be fulfilled in Shopify directly.
   const showLegacyForThisOrder = useLegacyFlow[group.order_id] === true;
   let trackingSection;
-  if (threeplEnabled && !showLegacyForThisOrder) {
+  if (isCancelled) {
+    trackingSection = `
+      <div class="success-box" style="margin-top:14px;background:#f3f4f6;border-color:#e5e7eb;color:#6b7280">
+        ✖ This order was cancelled in Shopify — no action required.
+      </div>`;
+  } else if (threeplEnabled && !showLegacyForThisOrder) {
     const sentInfo = items[0];
     const trackUrl = sentInfo?.tracking_number
       ? `https://t.17track.net/en#nums=${encodeURIComponent(sentInfo.tracking_number)}`
@@ -636,7 +643,9 @@ function renderOrderCard(group) {
   }
 
   // Status badge — picks from 3PL flow or legacy flow
-  const headerBadge = isFulfilled
+  const headerBadge = isCancelled
+    ? '<span class="badge badge-cancelled">Cancelled</span>'
+    : (isFulfilled
     ? '<span class="badge badge-fulfilled">Fulfilled</span>'
     : (threeplEnabled
         ? (isSent
@@ -644,10 +653,10 @@ function renderOrderCard(group) {
             : '<span class="badge badge-assigned">Action needed</span>')
         : (hasTracking
             ? '<span class="badge badge-tracking_added">Tracking Added</span>'
-            : '<span class="badge badge-assigned">Action needed</span>'));
+            : '<span class="badge badge-assigned">Action needed</span>')));
 
-  // Outstanding = action needed (not sent yet, not fulfilled, not in legacy flow override)
-  const isOutstanding = threeplEnabled && !showLegacyForThisOrder && !isFulfilled && !isSent;
+  // Outstanding = action needed (not sent yet, not fulfilled, not cancelled, not in legacy flow override)
+  const isOutstanding = threeplEnabled && !showLegacyForThisOrder && !isFulfilled && !isSent && !isCancelled;
   const isChecked     = bulkSelection.has(group.order_id);
 
   return `
