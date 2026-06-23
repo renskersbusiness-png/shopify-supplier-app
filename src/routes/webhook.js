@@ -16,7 +16,7 @@ const { assignOrderLineItems, getAssignedSupplierIds } = require('../services/as
 const { notifySuppliers } = require('../services/notifications');
 const { cancelOrderAssignments, updateFulfillmentTracking } = require('../db/assignments');
 const { decrementStock } = require('../db/supplier_skus');
-const { addFreeScreenIfMissing } = require('../shopify/freeScreen');
+const { enforceGifts } = require('../shopify/enforceGifts');
 
 // ── HMAC Verification Middleware ──────────────────────────────────────────────
 
@@ -155,20 +155,19 @@ async function processNewOrder(payload) {
     console.error('[Webhook] Assignment engine error:', err.message);
   }
 
-  // ── Safety net: free 120" screen ──────────────────────────────────────────
-  // Express Shop Pay launched from the product page bypasses the cart, so the
-  // gift-add (AOV / our custom cart script) never runs — the order then has the
-  // projector but no screen and DSers can't fulfil the gift. If a qualifying
-  // projector is present but the screen is missing, add the $0 gift variant via
-  // Order Edit. $0 = no revenue impact. Idempotent (skips if already present).
-  addFreeScreenIfMissing(shopifyOrderId, payload.line_items || [])
+  // ── Gift guarantee: enforce exactly the right free gifts ───────────────────
+  // Single source of truth that makes the ORDER correct regardless of cart-side
+  // chaos (AOV + custom buy-now + races can leave 0/1/2 gifts). Adds when missing
+  // (express Shop Pay bypasses the cart) AND caps extras (buy-now + AOV double).
+  // $0 variants -> order total unchanged. screen=max1 (Elite/Ultra), remote=1 per Pro Max.
+  enforceGifts(shopifyOrderId, payload.line_items || [])
     .then((r) => {
-      if (r && r.added) {
-        logActivity(orderId, 'free_screen', 'Free 120" screen auto-added (express-checkout safety net)');
-        console.log(`[Webhook] Free screen safety-net added to order ${payload.name}`);
+      if (r && r.enforced) {
+        logActivity(orderId, 'gift_enforced', `Gifts enforced (added ${r.added||0}, capped ${r.capped||0})`);
+        console.log(`[Webhook] Gifts enforced on order ${payload.name}: ${JSON.stringify(r)}`);
       }
     })
-    .catch((err) => console.error('[Webhook] Free-screen safety net error:', err.message));
+    .catch((err) => console.error('[Webhook] enforceGifts error:', err.message));
 }
 
 // ── orders/paid ───────────────────────────────────────────────────────────────
