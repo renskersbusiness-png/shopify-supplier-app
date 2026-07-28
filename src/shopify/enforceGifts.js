@@ -35,16 +35,15 @@ async function enforceGifts(shopifyOrderId, lineItems = []) {
   const units = (ids) => sum(items.filter(li => ids.includes(Number(li.product_id))).map(li => Number(li.quantity || 0)));
   const have  = (vid) => sum(items.filter(li => Number(li.variant_id) === vid).map(li => Number(li.quantity || 0)));
 
-  // SUMMER SALE 2026 (2026-07-20): gratis 120" scherm VERVALLEN.
-  // screenAllowed=0 → nooit een gift-scherm toevoegen, en een evt. door cart/AOV
-  // toegevoegd gift-scherm (variant 54202293911894) wordt juist verwijderd, zodat
-  // geen order meer met gratis scherm verzendt. Betaalde schermen (ander product) blijven.
-  // De Smart Remote (Pro Max) blijft ongewijzigd. Herstel de oude if/else hieronder om
-  // het gratis scherm te heractiveren:
-  //   if (units(SCREEN_QUALIFIERS) === 0) screenAllowed = 0;
-  //   else if (units([REAL_SCREEN_PRODUCT]) > 0) screenAllowed = Math.min(have(SCREEN_VARIANT_ID), 1);
-  //   else screenAllowed = 1;
-  const screenAllowed = 0;
+  // FLASH SUMMER GIFT (2026-07-27): gratis 120" scherm HERACTIVEERD (site belooft
+  // 'm weer incl. CLAIM-knop). Regel: max 1 gift-scherm als er een Pro Elite/Ultra
+  // in de order zit — TOEVOEGEN als 'ie mist, nooit verwijderen als 'ie er terecht
+  // bij zit. (Was 2026-07-20 t/m 27-07 hard op 0 → stripte de gifts van orders
+  // 2475-2480; die zijn handmatig hersteld.)
+  let screenAllowed;
+  if (units(SCREEN_QUALIFIERS) === 0) screenAllowed = 0;
+  else if (units([REAL_SCREEN_PRODUCT]) > 0) screenAllowed = Math.min(have(SCREEN_VARIANT_ID), 1);
+  else screenAllowed = 1;
   const remoteAllowed = units(PROMAX_QUALIFIERS);             // remote = 1 per Pro Max
   const screenHave = have(SCREEN_VARIANT_ID);
   const remoteHave = have(REMOTE_VARIANT_ID);
