@@ -160,6 +160,13 @@ async function processNewOrder(payload) {
   // chaos (AOV + custom buy-now + races can leave 0/1/2 gifts). Adds when missing
   // (express Shop Pay bypasses the cart) AND caps extras (buy-now + AOV double).
   // $0 variants -> order total unchanged. screen=max1 (Elite/Ultra), remote=1 per Pro Max.
+  // Staff-made orders (draft orders / admin) are intentional — e.g. a forgotten
+  // screen sent as its own $0 order (Zoomly-2561, 2026-08-08) — never "correct" those.
+  const staffSources = ['shopify_draft_order', 'draft_orders'];
+  if (staffSources.includes(payload.source_name)) {
+    console.log(`[Webhook] enforceGifts skipped for ${payload.name}: staff-created order (source ${payload.source_name})`);
+    return;
+  }
   enforceGifts(shopifyOrderId, payload.line_items || [])
     .then((r) => {
       if (r && r.enforced) {
