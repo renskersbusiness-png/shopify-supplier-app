@@ -40,10 +40,14 @@ async function enforceGifts(shopifyOrderId, lineItems = []) {
   // in de order zit — TOEVOEGEN als 'ie mist, nooit verwijderen als 'ie er terecht
   // bij zit. (Was 2026-07-20 t/m 27-07 hard op 0 → stripte de gifts van orders
   // 2475-2480; die zijn handmatig hersteld.)
+  // 2026-08-19: plafond is het AANTAL gekwalificeerde projectoren, niet 1.
+  // Was hard op 1 -> bij 2 Pro Elites verdween het tweede gratis scherm
+  // (Zoomly-2577), bij 5 stuks vier. Symmetrisch met de remote-regel eronder.
+  const qualifying = units(SCREEN_QUALIFIERS);
   let screenAllowed;
-  if (units(SCREEN_QUALIFIERS) === 0) screenAllowed = 0;
-  else if (units([REAL_SCREEN_PRODUCT]) > 0) screenAllowed = Math.min(have(SCREEN_VARIANT_ID), 1);
-  else screenAllowed = 1;
+  if (qualifying === 0) screenAllowed = 0;
+  else if (units([REAL_SCREEN_PRODUCT]) > 0) screenAllowed = Math.min(have(SCREEN_VARIANT_ID), qualifying);
+  else screenAllowed = qualifying;
   const remoteAllowed = units(PROMAX_QUALIFIERS);             // remote = 1 per Pro Max
   const screenHave = have(SCREEN_VARIANT_ID);
   const remoteHave = have(REMOTE_VARIANT_ID);
@@ -102,7 +106,7 @@ async function enforceGifts(shopifyOrderId, lineItems = []) {
   }
 
   const commit = await shopifyGraphQL(
-    `mutation($id:ID!){ orderEditCommit(id:$id, notifyCustomer:false, staffNote:"Gifts enforced (screen=max1 if Elite/Ultra, remote=1 per Pro Max) by supplier-app"){ order{ id } userErrors{ field message } } }`,
+    `mutation($id:ID!){ orderEditCommit(id:$id, notifyCustomer:false, staffNote:"Gifts enforced (screen=1 per Elite/Ultra, remote=1 per Pro Max) by supplier-app"){ order{ id } userErrors{ field message } } }`,
     { id: calcId },
   );
   const ce = commit.orderEditCommit && commit.orderEditCommit.userErrors;
