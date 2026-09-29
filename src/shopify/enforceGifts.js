@@ -24,8 +24,8 @@ const REMOTE_VARIANT_ID = 54208001147222;
 const SCREEN_GID = `gid://shopify/ProductVariant/${SCREEN_VARIANT_ID}`;
 const REMOTE_GID = `gid://shopify/ProductVariant/${REMOTE_VARIANT_ID}`;
 
-const SCREEN_QUALIFIERS = [10319535178070, 10541128778070]; // Pro Elite, Pro Ultra
-const PROMAX_QUALIFIERS = [9420182225238, 9414792085846];   // Pro Max (active + draft)
+const SCREEN_QUALIFIERS = [10319535178070, 11206848020822, 10541128778070]; // Pro Elite, Pro Elite prijs-oplader (zoomly-pro-elite-1-2), Pro Ultra
+const PROMAX_QUALIFIERS = [9420182225238, 11206102024534, 9414792085846]; // Pro Max, Pro Max prijs-oplader (home-theater-projector-zoomly-pro-max-2), draft
 const REAL_SCREEN_PRODUCT = 10574046265686;                 // betaalde 120" screen (origineel)
 
 const sum = (arr) => arr.reduce((s, n) => s + n, 0);
